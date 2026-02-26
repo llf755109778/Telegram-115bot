@@ -625,13 +625,13 @@ def register_download_handlers(application):
     application.add_handler(CallbackQueryHandler(handle_download_failure, pattern=r"^cancel_download$"))
     
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^(magnet:|ed2k://|ED2K://|thunder://|http://|https://)'), 
+        filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'(magnet:|ed2k://|ED2K://|thunder://|http://|https://)'),
         handle_manual_rename
     ), group=1)
     init.logger.info("✅ Downloader处理器已注册")
 
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^(magnet:|ed2k://|ED2K://|thunder://|http://|https://)'),
+        filters.TEXT & ~filters.COMMAND & filters.Regex(r'(magnet:|ed2k://|ED2K://|thunder://)'),
         start_batch_download_command
-    ), group=2)
+    ), group=1)
     init.logger.info("✅ Downloader处理器已注册")

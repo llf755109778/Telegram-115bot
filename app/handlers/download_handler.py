@@ -9,6 +9,8 @@ import init
 import re
 import time
 from pathlib import Path
+
+from app.handlers.av_download_handler import start_batch_download_command
 from app.utils.cover_capture import get_movie_cover
 from app.utils.message_queue import add_task_to_queue
 from app.utils.ai import get_movie_tmdb_name_with_ai
@@ -367,36 +369,39 @@ def download_task(link, selected_path, user_id):
             add_task_to_queue(user_id, None, message=message, keyboard=reply_markup)
             
         else:
-            # 下载超时，删除任务并提供选择
-            init.openapi_115.del_offline_task(info_hash)
-            init.logger.warn(f"❌ {resource_name} 离线下载超时")
-            
-            # 为失败重试也使用时间戳ID
-            retry_task_id = str(int(time.time() * 1000))
-            
-            # 将重试任务数据存储到全局字典中
-            if not hasattr(init, 'pending_tasks'):
-                init.pending_tasks = {}
-                
-            init.pending_tasks[retry_task_id] = {
-                "user_id": user_id,
-                "action": "retry_download",
-                "selected_path": selected_path,
-                "resource_name": resource_name,
-                "link": link,
-                "add2retry": True
-            }
-            
-            # 提供重试选项
-            keyboard = [
-                [InlineKeyboardButton("指定TMDB名称并添加到重试列表", callback_data=f"rename_{retry_task_id}")],
-                [InlineKeyboardButton("取消", callback_data="cancel_download")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            message = f"`{link}`\n\n😭 离线下载超时，请选择后续操作："
-            
-            add_task_to_queue(user_id, None, message=message, keyboard=reply_markup)
-            
+            init.logger.warn(f"❌ {resource_name} 离线下载超时 继续等待")
+
+        # else:
+        #     # 下载超时，删除任务并提供选择
+        #     init.openapi_115.del_offline_task(info_hash)
+        #     init.logger.warn(f"❌ {resource_name} 离线下载超时")
+        #
+        #     # 为失败重试也使用时间戳ID
+        #     retry_task_id = str(int(time.time() * 1000))
+        #
+        #     # 将重试任务数据存储到全局字典中
+        #     if not hasattr(init, 'pending_tasks'):
+        #         init.pending_tasks = {}
+        #
+        #     init.pending_tasks[retry_task_id] = {
+        #         "user_id": user_id,
+        #         "action": "retry_download",
+        #         "selected_path": selected_path,
+        #         "resource_name": resource_name,
+        #         "link": link,
+        #         "add2retry": True
+        #     }
+        #
+        #     # 提供重试选项
+        #     keyboard = [
+        #         [InlineKeyboardButton("指定TMDB名称并添加到重试列表", callback_data=f"rename_{retry_task_id}")],
+        #         [InlineKeyboardButton("取消", callback_data="cancel_download")]
+        #     ]
+        #     reply_markup = InlineKeyboardMarkup(keyboard)
+        #     message = f"`{link}`\n\n😭 离线下载超时，请选择后续操作："
+        #
+        #     add_task_to_queue(user_id, None, message=message, keyboard=reply_markup)
+
     except Exception as e:
         init.logger.error(f"💀下载遇到错误: {str(e)}")
         add_task_to_queue(user_id, f"{init.IMAGE_PATH}/male023.png",
@@ -623,4 +628,10 @@ def register_download_handlers(application):
         filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^(magnet:|ed2k://|ED2K://|thunder://|http://|https://)'), 
         handle_manual_rename
     ), group=1)
+    init.logger.info("✅ Downloader处理器已注册")
+
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.Regex(r'^(magnet:|ed2k://|ED2K://|thunder://|http://|https://)'),
+        start_batch_download_command
+    ), group=2)
     init.logger.info("✅ Downloader处理器已注册")

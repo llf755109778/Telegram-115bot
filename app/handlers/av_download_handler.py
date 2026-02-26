@@ -47,17 +47,42 @@ async def start_av_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SELECT_MAIN_CATEGORY
 
 
+def extract_and_join_links(text):
+    # 修改正则：去掉 ^ 和 $，确保能从文本中间提取
+    patterns = {
+        "magnet": r'magnet:\?xt=urn:btih:(?:[a-fA-F0-9]{40}|[a-zA-Z2-7]{32})(?:&[^\s]+)?',
+        "ed2k": r'ed2k://\|file\|[^|]+\|[0-9]+\|[a-fA-F0-9]{32}\|(?:[^|]+\|)?',
+        "thunder": r'thunder://[a-zA-Z0-9+/=]+'
+    }
+
+    # 将所有正则合并为一个，提高搜索效率
+    combined_pattern = f"({'|'.join(patterns.values())})"
+
+    # 使用 re.findall 提取所有匹配项
+    # IGNORECASE 忽略大小写，防止有人写 MAGNET: 或 ED2K:
+    links = re.findall(combined_pattern, text, flags=re.IGNORECASE)
+
+    # 提取结果可能是元组（如果正则里有分组），这里确保拿到的是字符串列表
+    if links:
+        # 去重并保持顺序（如果有需要）
+        unique_links = list(dict.fromkeys(links))
+        # 使用换行符拼接
+        return "\n".join(unique_links)
+
+    return ""
+
+
 async def start_batch_download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usr_id = update.message.from_user.id
     if not init.check_user(usr_id):
         await update.message.reply_text("⚠️ 对不起，您无权使用115机器人！")
         return ConversationHandler.END
-    
-    if not update.message or not update.message.text:
+    links = extract_and_join_links(update.message.text)
+    if not update.message or not update.message.text or links == "":
         await update.message.reply_text("⚠️ 没有检测到下载链接！")
         return ConversationHandler.END
     
-    context.user_data["dl_links"] = update.message.text
+    context.user_data["dl_links"] = links
     # 显示主分类（电影/剧集）
     keyboard = [
         [InlineKeyboardButton(f"📁 {category['display_name']}", callback_data=category['name'])] for category in

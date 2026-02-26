@@ -407,8 +407,8 @@ def download_task(link, selected_path, user_id):
                             message=f"❌ 下载任务执行出错: {escape_markdown(str(e), version=2)}")
     finally:
         # 清除云端任务，避免重复下载
-        init.openapi_115.del_offline_task(info_hash, del_source_file=0)
-
+        # init.openapi_115.del_offline_task(info_hash, del_source_file=0)
+        pass
 
 async def handle_manual_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理手动重命名的回调"""

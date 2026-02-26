@@ -141,7 +141,7 @@ def sehua_offline():
                 else:
                     init.logger.warn(f"{item['title']} 离线下载失败或未完成。")
                     # 删除离线失败的文件
-                    init.openapi_115.del_offline_task(task['info_hash'])
+                    # init.openapi_115.del_offline_task(task['info_hash'])
                 break
     # 等待消息队列处理完成，避免在消息发送期间删除图片文件
     wait_for_message_queue_completion("涩花")
@@ -333,7 +333,7 @@ def av_daily_offline():
                 else:
                     init.logger.warn(f"{item['av_number']} 离线下载失败或未完成。")
                     # 删除离线失败的文件
-                    init.openapi_115.del_offline_task(task['info_hash'])
+                    # init.openapi_115.del_offline_task(task['info_hash'])
                 break
             
     # 等待消息队列处理完成，避免在消息发送期间进行清理操作
@@ -561,7 +561,7 @@ def t66y_offline():
                 else:
                     init.logger.warn(f"{item['title']} 离线下载失败或未完成。")
                     # 删除离线失败的文件
-                    init.openapi_115.del_offline_task(task['info_hash'])
+                    # init.openapi_115.del_offline_task(task['info_hash'])
                 break
     
     # 等待消息队列处理完成
@@ -692,7 +692,7 @@ def javbus_offline():
                 else:
                     init.logger.warn(f"{item['title']} 离线下载失败或未完成。")
                     # 删除离线失败的文件
-                    init.openapi_115.del_offline_task(task['info_hash'])
+                    # init.openapi_115.del_offline_task(task['info_hash'])
                 break
     
     # 等待消息队列处理完成

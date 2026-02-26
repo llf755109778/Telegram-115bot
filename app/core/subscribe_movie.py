@@ -225,7 +225,7 @@ def download_from_link(download_url, movie_name, save_path):
                 return True
             else:
                 # 下载超时删除任务
-                init.openapi_115.del_offline_task(info_hash)
+                # init.openapi_115.del_offline_task(info_hash)
                 init.logger.warn(f"😭离线下载超时，稍后将再次尝试!")
                 return False
     except Exception as e:
@@ -235,8 +235,8 @@ def download_from_link(download_url, movie_name, save_path):
         return False
     finally:
         # 清除云端任务，避免重复下载
-        init.openapi_115.del_offline_task(info_hash, del_source_file=0)
-    
+        # init.openapi_115.del_offline_task(info_hash, del_source_file=0)
+        pass
     
 def send_message2usr(tmdb_id, sqlite):
     try:

@@ -142,12 +142,12 @@ def try_to_offline2115_again():
                     # 更新重试次数
                     update_retry_time(task_id)
                     # 删除失败资源
-                    init.openapi_115.del_offline_task(task['info_hash'])
+                    # init.openapi_115.del_offline_task(task['info_hash'])
                 break
     # 清除云端任务
     for info_hash in success_list:
         init.logger.info(f"清除云端任务 {info_hash} ...")
-        init.openapi_115.del_offline_task(info_hash, del_source_file=0)
+        # init.openapi_115.del_offline_task(info_hash, del_source_file=0)
         time.sleep(2)
     
 

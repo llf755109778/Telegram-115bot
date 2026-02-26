@@ -322,7 +322,8 @@ def download_task(av_result, av_number, save_path, user_id):
                 return  # 成功后直接返回
             else:
                 # 删除失败的离线任务
-                init.openapi_115.del_offline_task(info_hash)
+                # init.openapi_115.del_offline_task(info_hash)
+                pass
 
         # 如果循环结束都没有成功，发送失败通知
         init.logger.info(f"❌ {av_number} 所有磁力链接都下载失败")
@@ -334,8 +335,8 @@ def download_task(av_result, av_number, save_path, user_id):
                             message=f"❌ 下载任务执行出错: {escape_markdown(str(e), version=2)}")
     finally:
         # 清空离线任务
-        init.openapi_115.del_offline_task(info_hash, del_source_file=0)
-
+        # init.openapi_115.del_offline_task(info_hash, del_source_file=0)
+        pass
 def push2aria2(save_path, user_id, cover_image, message):
     # 为Aria2推送创建任务ID系统
     import uuid
@@ -412,7 +413,7 @@ def batch_download_task(magnet_links, save_path, user_id):
                 else:
                     init.logger.warn(f"[{task['name']}] 离线下载失败或未完成!")
                     # 删除离线失败的文件
-                    init.openapi_115.del_offline_task(task['info_hash'])
+                    # init.openapi_115.del_offline_task(task['info_hash'])
                 break
     message = f"✅ 批量离线任务完成！\n离线成功: {success_count}/{len(valid_links)}\n保存目录: {save_path}"
 

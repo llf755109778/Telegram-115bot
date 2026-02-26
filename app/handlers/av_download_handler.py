@@ -75,7 +75,13 @@ def extract_and_join_links(text):
 
 
 async def start_batch_download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    usr_id = update.message.from_user.id
+    user = update.effective_user
+    msg = update.effective_message
+
+    if not user or not msg:
+        return ConversationHandler.END
+
+    usr_id = user.id
     if not init.check_user(usr_id):
         await update.message.reply_text("⚠️ 对不起，您无权使用115机器人！")
         return ConversationHandler.END
@@ -457,8 +463,9 @@ def register_av_download_handlers(application):
     # download下载交互
     download_handler = ConversationHandler(
         entry_points=[CommandHandler("av", start_av_command),
-                      MessageHandler((filters.TEXT | filters.CAPTION) & filters.Regex(r'(magnet:|ed2k://|ED2K://|thunder://)'), start_batch_download_command),
-                      MessageHandler( filters.Document.TXT, download_from_file)],
+                      MessageHandler(filters.CaptionRegex(r'(?i)(magnet:|ed2k://|thunder://)') |
+                                     filters.Regex(r'(?i)(magnet:|ed2k://|thunder://)'), start_batch_download_command),
+                      MessageHandler(filters.Document.TXT, download_from_file)],
         states={
             SELECT_MAIN_CATEGORY: [CallbackQueryHandler(select_main_category)],
             SELECT_SUB_CATEGORY: [CallbackQueryHandler(select_sub_category)]

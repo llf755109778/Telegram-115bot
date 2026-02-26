@@ -10,7 +10,6 @@ import re
 import time
 from pathlib import Path
 
-from app.handlers.av_download_handler import start_batch_download_command
 from app.utils.cover_capture import get_movie_cover
 from app.utils.message_queue import add_task_to_queue
 from app.utils.ai import get_movie_tmdb_name_with_ai

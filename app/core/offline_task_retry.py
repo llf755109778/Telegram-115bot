@@ -190,7 +190,7 @@ def sehua_offline():
         generate_strm_file(result)
     
     # 清空已完成的离线任务
-    init.openapi_115.clear_cloud_task()
+    # init.openapi_115.clear_cloud_task()
     
     # 删除临时文件
     del_images(images)
@@ -357,7 +357,7 @@ def av_daily_offline():
     generate_strm_file(result)
     
     # 清空已完成的离线任务
-    init.openapi_115.clear_cloud_task()
+    # init.openapi_115.clear_cloud_task()
     
     
 def av_daily_success_proccesser(item, task, save_path):
@@ -592,7 +592,7 @@ def t66y_offline():
         generate_strm_file(result)
         
     # 清空已完成的离线任务
-    init.openapi_115.clear_cloud_task()
+    # init.openapi_115.clear_cloud_task()
 
 
 def t66y_success_proccesser(item, save_path, task):
@@ -716,7 +716,7 @@ def javbus_offline():
     del_images(images)
         
     # 清空已完成的离线任务
-    init.openapi_115.clear_cloud_task()
+    # init.openapi_115.clear_cloud_task()
 
 
 def javbus_success_proccesser(item, save_path, task):

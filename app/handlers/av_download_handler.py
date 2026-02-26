@@ -454,7 +454,7 @@ def register_av_download_handlers(application):
     # download下载交互
     download_handler = ConversationHandler(
         entry_points=[CommandHandler("av", start_av_command),
-                      MessageHandler(filters.TEXT & filters.Regex(r'^(magnet:|ed2k://|ED2K://|thunder://).+\n.+'), start_batch_download_command),
+                      MessageHandler(filters.Regex(r'(magnet:|ed2k://|ED2K://|thunder://)'), start_batch_download_command),
                       MessageHandler( filters.Document.TXT, download_from_file)],
         states={
             SELECT_MAIN_CATEGORY: [CallbackQueryHandler(select_main_category)],

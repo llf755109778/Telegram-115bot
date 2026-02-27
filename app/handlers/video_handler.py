@@ -233,39 +233,65 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
 
             # 尝试获取消息
             target_msg = None
-            
-            # 方法1: 精确 ID 获取 (Telethon get_messages with ids)
-            try:
-                msg = await init.tg_user_client.get_messages(entity, ids=video_info['message_id'])
-                if msg and msg.media:
-                    target_msg = msg
-            except Exception as e:
-                init.logger.warning(f"精确获取消息失败: {e}")
+
+            # # 方法1: 精确 ID 获取 (Telethon get_messages with ids)
+            # try:
+            #     init.logger.info(f"尝试精确获取消息 (Entity: {entity}, ID: {video_info['message_id']})")
+            #     msg = await init.tg_user_client.get_messages(entity, ids=video_info['message_id'])
+            #     if msg and msg.media:
+            #         target_msg = msg
+            # except Exception as e:
+            #     init.logger.warning(f"精确获取消息失败: {e}")
 
             # 方法2: 遍历最近消息 (Fallback，兼容旧逻辑)
-            if not target_msg:
-                init.logger.info(f"精确获取失败，尝试遍历最近消息 (ID: {video_info['message_id']})")
-                try:
-                    # 获取最近 20 条消息
-                    recent_msgs = await init.tg_user_client.get_messages(entity, limit=20)
-                    
-                    # 2.1 优先寻找 ID 匹配的消息
-                    for msg in recent_msgs:
-                        if msg.id == video_info['message_id'] and msg.media:
-                            target_msg = msg
-                            break
-                    
-                    # 2.2 如果没找到 ID，寻找最近的一条带视频的消息 (用户提到的"原来的写法")
-                    if not target_msg:
-                        for msg in recent_msgs:
-                            if msg.media:
-                                # 简单的校验：如果是视频/文件
-                                target_msg = msg
-                                init.logger.info(f"使用最近的媒体消息作为目标 (ID: {msg.id})")
-                                break
-                except Exception as e:
-                    init.logger.error(f"遍历消息失败: {e}")
+            # 获取最近 20 条消息
+            recent_msgs = await init.tg_user_client.get_messages(entity, limit=20)
 
+            # 1. 尝试通过文件指纹（大小 + 名称）严格匹配
+            for msg in recent_msgs:
+                if msg.media:
+                    # 获取 Telethon 侧的消息属性
+                    u_size = msg.file.size if msg.file else 0
+                    u_name = msg.file.name if msg.file else ""
+
+                    # 匹配逻辑：
+                    # 1. 文件大小完全一致 (或者绝对误差小于 1024 字节)
+                    # 2. 文件名一致 (考虑部分客户端可能不传文件名，增加判空或后缀匹配)
+                    size_match = (u_size == video_info['file_size'])
+
+                    # 文件名匹配：由于 Telegram 在不同客户端可能处理文件名的方式不同（有的带后缀有的不带）
+                    # 我们进行忽略大小写的比较，或者检查保存的文件名是否在当前消息的文件名中
+                    name_match = False
+                    if u_name and video_info['file_name']:
+                        name_match = (u_name.lower() == video_info['file_name'].lower())
+
+                    # 如果大小和名字都对上了，那基本就是 100% 确定了
+                    if size_match and name_match:
+                        target_msg = msg
+                        init.logger.info(f"✅ 成功通过指纹匹配到视频: {u_name} (ID: {msg.id})")
+                        break
+
+            # 2. 如果第一遍严格匹配没找到（比如有些消息没带文件名），尝试“大小匹配”作为兜底
+            if not target_msg:
+                init.logger.warning("严格匹配失败，尝试仅通过文件大小匹配...")
+                for msg in recent_msgs:
+                    if msg.media:
+                        u_size = msg.file.size if msg.file else 0
+                        if u_size == video_info['file_size']:
+                            target_msg = msg
+                            init.logger.info(f"⚠️ 通过文件大小兜底匹配成功: ID {msg.id}")
+                            break
+
+            # 3. 如果第一遍严格匹配没找到（比如有些消息没带文件名），尝试“大小匹配”作为兜底
+            if not target_msg:
+                for msg in recent_msgs:
+                    if msg.media:
+                        # 简单的校验：如果是视频/文件
+                        target_msg = msg
+                        init.logger.info(f"使用最近的媒体消息作为目标 (ID: {msg.id})")
+                        break
+
+            # 4. 最后校验
             if not target_msg:
                 await query.edit_message_text(f"❌ 无法获取原始视频消息 (Entity: {entity}, ID: {video_info['message_id']})")
                 return

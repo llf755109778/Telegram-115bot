@@ -236,6 +236,7 @@ class OpenAPI_115:
         }
         
         try:
+            init.logger.info(url)
             response = requests.post(url, headers=header, data=data)
             res = response.json()
         except Exception as e:
@@ -271,7 +272,7 @@ class OpenAPI_115:
                 return {"code": -1, "message": "今日请求即将到达上限！请明日再试！"}
             
             # 2. 智能流控：确保请求间隔至少 0.5s (即最大 2 QPS)
-            min_interval = 0.5
+            min_interval = 1
             current_time = time.time()
             elapsed = current_time - self.last_req_time
             
@@ -282,7 +283,7 @@ class OpenAPI_115:
             
             if headers is None:
                 headers = self._get_headers()
-        
+        init.logger.info(f"API请求: {method} {url} {params} {data}")
         if method.upper() == 'GET':
             response = requests.get(url, headers=headers, params=params)
         elif method.upper() == 'POST':
@@ -415,7 +416,10 @@ class OpenAPI_115:
         if isinstance(response, dict) and response.get('code') == 0 and 'data' in response:
             page_count = response['data'].get('page_count', 1)
             for i in range(1, page_count + 1):
-                tasks = self.get_offline_tasks_by_page(i)
+                if i == 1:
+                    tasks = response['data']
+                else:
+                    tasks = self.get_offline_tasks_by_page(i)
                 if tasks and 'tasks' in tasks:
                     for task in tasks['tasks']:
                         task_list.append({
@@ -986,7 +990,8 @@ class OpenAPI_115:
         time_out = 0
         task_name = ""
         info_hash = ""
-        while time_out < offline_timeout:
+        time.sleep(30)
+        while time_out < 3:
             tasks = self.get_offline_tasks()
             if not tasks:
                 return False, "", ""
@@ -999,7 +1004,7 @@ class OpenAPI_115:
                     if task.get('status') == 2 or task.get('percentDone') == 100:
                         return True, task_name, info_hash
                     else:
-                        time.sleep(10)
+                        # time.sleep(10)
                         time_out += 10
                     break
         init.logger.warn(f"[{task_name}]离线下载超时!")

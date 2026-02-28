@@ -515,11 +515,12 @@ def parse_section_page(html_content, date, page_num, section_name):
         title = title_link.text.strip() if title_link else "无标题"
         
         if not topic_date or topic_date != date:
+            init.logger.info(f"帖子[{title}]的日期[{topic_date}]不匹配目标日期[{date}]，跳过!")
             continue  # 跳过非当日的帖子
             
         # 提前过滤标题
         if not is_title_allowed(section_name, title):
-            init.logger.debug(f"标题[{title}]不满足[{section_name}]板块的规则，跳过!")
+            init.logger.info(f"标题[{title}]不满足[{section_name}]板块的规则，跳过!")
             continue
               
         # 提取链接（从标题的a标签的href属性）

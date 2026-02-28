@@ -245,7 +245,7 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
 
             # 方法2: 遍历最近消息 (Fallback，兼容旧逻辑)
             # 获取最近 20 条消息
-            recent_msgs = await init.tg_user_client.get_messages(entity, limit=20)
+            recent_msgs = await init.tg_user_client.get_messages(entity, limit=200)
 
             # 1. 尝试通过文件指纹（大小 + 名称）严格匹配
             for msg in recent_msgs:

@@ -122,13 +122,14 @@ async def select_sub_category(update: Update, context: ContextTypes.DEFAULT_TYPE
     if selected_path == "cancel":
         return await quit_conversation(update, context)
     link = context.user_data["link"]
+    dl_url_type = context.user_data["dl_url_type"]
     selected_main_category = context.user_data["selected_main_category"]
     user_id = update.effective_user.id
 
     await query.edit_message_text("✅ 已为您添加到下载队列！\n请稍后~")
 
     # 使用全局线程池异步执行下载任务
-    download_executor.submit(download_task, link, selected_path, user_id)
+    download_executor.submit(download_task, link, selected_path, user_id, dl_url_type)
     return ConversationHandler.END
 
 
@@ -305,11 +306,16 @@ def save_failed_download_to_db(title, magnet, save_path):
         raise str(e)
 
 
-def download_task(link, selected_path, user_id):
+def download_task(link, selected_path, user_id, dl_url_type=None):
     """异步下载任务"""
     from app.utils.message_queue import add_task_to_queue
     info_hash = ""
     try:
+        if dl_url_type == DownloadUrlType.HTTP:
+            # HTTP下载
+            add_task_to_queue(user_id, None, message="open115 暂不支持转存")
+            return
+
         offline_success = init.openapi_115.offline_download_specify_path(link, selected_path)
         if not offline_success:
             add_task_to_queue(user_id, f"{init.IMAGE_PATH}/male023.png", message=f"❌ 离线遇到错误！")

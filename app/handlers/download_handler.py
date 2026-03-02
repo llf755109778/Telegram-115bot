@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import asyncio
+import uuid
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, ConversationHandler, \
@@ -10,6 +12,7 @@ import re
 import time
 from pathlib import Path
 
+from app.core.video_downloader import video_manager
 from app.utils.cover_capture import get_movie_cover
 from app.utils.message_queue import add_task_to_queue
 from app.utils.ai import get_movie_tmdb_name_with_ai
@@ -33,6 +36,8 @@ class DownloadUrlType(Enum):
     MAGNET = "magnet"
     HTTP = "http"
     UNKNOWN = "unknown"
+    LINK_115 = "https://115"
+    LINK_tg = "https://t.me"
 
     def __str__(self):
         return self.value
@@ -85,7 +90,7 @@ async def select_main_category(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.edit_message_text("✅ 已为您添加到下载队列！\n请稍后~")
 
             # 使用全局线程池异步执行下载任务
-            download_executor.submit(download_task, link, last_save_path, user_id)
+            context.application.create_task(download_task(link, last_save_path, user_id))
             return ConversationHandler.END
         else:
             await query.edit_message_text("❌ 未找到最后一次保存路径，请重新选择分类")
@@ -127,9 +132,16 @@ async def select_sub_category(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
 
     await query.edit_message_text("✅ 已为您添加到下载队列！\n请稍后~")
+    task_info = {
+        "save_path": selected_path,
+        "context": context,
+        "task_id": str(uuid.uuid4())[:8],
+        "chat_id": update.effective_chat.id,
+        "message_id": query.message.message_id  # 更新这条消息的状态
+    }
 
     # 使用全局线程池异步执行下载任务
-    download_executor.submit(download_task, link, selected_path, user_id, dl_url_type)
+    context.application.create_task(download_task(link, selected_path, user_id, dl_url_type, task_info))
     return ConversationHandler.END
 
 
@@ -304,117 +316,201 @@ def save_failed_download_to_db(title, magnet, save_path):
                 init.logger.info(f"[{title}]已添加到重试列表")
     except Exception as e:
         raise str(e)
+download_semaphore = asyncio.Semaphore(5)
 
 
-def download_task(link, selected_path, user_id, dl_url_type=None):
-    """异步下载任务"""
-    from app.utils.message_queue import add_task_to_queue
-    info_hash = ""
+async def get_list(link: str):
+    # 匹配频道 ID/用户名 和 消息 ID
+    # 支持 https://t.me/c/123456/789 和 https://t.me/username/789
+    pattern = r"t\.me/(?:c/)?([^/]+)/(\d+)"
+    match = re.search(pattern, link)
+
+    if not match:
+        return None
+
+    peer = match.group(1)
+    msg_id = int(match.group(2))
+
+    # 如果是私有频道 (c/xxx)，ID 需要转换成 Telethon 识别的格式
+    if "/c/" in link:
+        peer = int(f"-100{peer}")  # 私有频道 ID 补全
+
     try:
-        if dl_url_type == DownloadUrlType.HTTP:
-            # HTTP下载
-            add_task_to_queue(user_id, None, message="open115 暂不支持转存")
-            return
+        # 获取目标消息
+        target_msg = await init.tg_user_client.get_messages(peer, ids=msg_id)
 
-        offline_success = init.openapi_115.offline_download_specify_path(link, selected_path)
-        if not offline_success:
-            add_task_to_queue(user_id, f"{init.IMAGE_PATH}/male023.png", message=f"❌ 离线遇到错误！")
-            return
+        if target_msg:
+            target_msgs_to_download = []
 
-        # 检查下载状态
-        download_success, resource_name, info_hash = init.openapi_115.check_offline_download_success(link)
+            # 1. 检查是否是媒体组的一部分
+            if target_msg.grouped_id:
+                init.logger.info(f"检测到媒体组，grouped_id: {target_msg.grouped_id}")
+                # 获取相同 grouped_id 的所有消息（通常在前后几十条范围内）
+                group_msgs = await init.tg_user_client.get_messages(peer, limit=100, offset_id=target_msg.id + 50)
+                target_msgs_to_download = [m for m in group_msgs if m.grouped_id == target_msg.grouped_id]
 
-        if download_success:
-            init.logger.info(f"✅ {resource_name} 离线下载成功！")
-            time.sleep(1)
+            # 2. 如果不是媒体组，检查是否是单个视频
+            elif target_msg.video:
+                init.logger.info("检测到单个视频文件")
+                target_msgs_to_download = [target_msg]
 
-            # 处理下载结果
-            final_path = f"{selected_path}/{resource_name}"
-            if init.openapi_115.is_directory(final_path):
-                # 如果下载的内容是目录，清除垃圾文件
-                init.openapi_115.auto_clean_all(final_path)
+            # 3. 如果都不是，向后获取 50 条消息寻找最近的一个媒体组
             else:
-                # 如果下载的内容是文件，为文件套一个文件夹
-                temp_folder = Path(resource_name).stem
-                init.openapi_115.create_dir_for_file(selected_path, temp_folder)
-                # 移动文件到临时目录
-                init.openapi_115.move_file(final_path, f"{selected_path}/{temp_folder}")
-                final_path = f"{selected_path}/{temp_folder}"
-                resource_name = temp_folder
+                init.logger.info("当前消息非视频/媒体组，正在向后搜索 50 条消息寻找媒体组...")
+                # 获取目标消息之后的 50 条消息
+                future_msgs = await init.tg_user_client.get_messages(entity, limit=50, offset_id=target_msg.id,
+                                                                     reverse=True)
 
-            # 为避免callback_data长度限制，使用时间戳作为唯一标识符
-            task_id = str(int(time.time() * 1000))  # 毫秒时间戳作为唯一ID
+                found_group_id = None
+                for f_msg in future_msgs:
+                    if f_msg.grouped_id:
+                        found_group_id = f_msg.grouped_id
+                        # 再次过滤出该组的所有成员
+                        target_msgs_to_download = [m for m in future_msgs if m.grouped_id == found_group_id]
+                        break
 
-            # 将任务数据存储到全局字典中（临时存储）
-            if not hasattr(init, 'pending_tasks'):
-                init.pending_tasks = {}
+            # 4. 组装任务并提交给 video_manager
+            if target_msgs_to_download:
+                for m in target_msgs_to_download:
+                    # 这里的 task_info 需要根据你的 VideoDownloadManager 结构填充
+                    # 特别注意：如果是多文件下载，task_id 可能需要带序号或 unique 处理
+                    sub_task_info = {
+                        "task_id": f"{task_id}_{m.id}",
+                        "file_name": m.file.name or f"video_{m.id}.mp4",
+                        "file_size": m.file.size,
+                        "save_path": selected_path,
+                        "message": m,  # 传入当前这条消息对象供下载器使用
+                        "context": context,
+                        "chat_id": entity,
+                        "message_id": message_id  # 这里的 ID 可以保持不变，用于更新同一个进度条
+                    }
+                    await video_manager.add_task(sub_task_info)
 
-            init.pending_tasks[task_id] = {
-                "user_id": user_id,
-                "action": "manual_rename",
-                "final_path": final_path,
-                "resource_name": resource_name,
-                "selected_path": selected_path,
-                "link": link,
-                "add2retry": False
-            }
-
-            # 发送下载成功通知，包含选择按钮
-            keyboard = [
-                [InlineKeyboardButton("指定标准的TMDB名称", callback_data=f"rename_{task_id}")],
-                [InlineKeyboardButton("取消", callback_data=f"cancel_{task_id}")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            movie_name = get_movie_tmdb_name_with_ai(resource_name)  # 预调用AI接口，提前准备
-            if movie_name:
-                message = f"✅ \\[`{resource_name}`\\]离线下载完成\\!\n\n根据AI识别，推荐的TMDB名称是：`{movie_name}`\n\n请确认！"
+                # 成功加入队列后的通知
+                add_task_to_queue(user_id, None,
+                                  message=f"✅ 已成功识别并添加 {len(target_msgs_to_download)} 个文件到下载队列")
             else:
-                message = f"✅ \\[`{resource_name}`\\]离线下载完成\\!\n\n如需削刮，请为资源指定TMDB的标准名称！"
+                add_task_to_queue(user_id, None, message="❌ 未找到可下载的视频或媒体组")
 
-            add_task_to_queue(user_id, None, message=message, keyboard=reply_markup)
+    return
 
-        else:
-            init.logger.warn(f"❌ {resource_name} 离线下载超时 继续等待")
+async def download_task(link:str, selected_path, user_id, dl_url_type=None, task_info=None):
+    async with download_semaphore:
+        """异步下载任务"""
+        from app.utils.message_queue import add_task_to_queue
+        info_hash = ""
+        try:
+            if dl_url_type == DownloadUrlType.HTTP and link.startswith(DownloadUrlType.LINK_tg.__str__()):
+                    # "file_name": video_info['file_name'],
+                    # "file_size": video_info['file_size'],
+                    # "message": target_msg,
+                # 获取当前消息 如果当前消息是媒体组的一部分 下载这个媒体组，如果不是媒体组并且是视频 下载它，如果不是媒体组并且不是视频 获取后面的50消息 找到一个媒体组的然后下载
+                videoList = get_list(link)
+                if not videoList:
+                    add_task_to_queue(user_id, None, message="open115 暂不支持转存")
+                await video_manager.add_task(task_info)
+                # HTTP下载
+                return
 
-        # else:
-        #     # 下载超时，删除任务并提供选择
-        #     init.openapi_115.del_offline_task(info_hash)
-        #     init.logger.warn(f"❌ {resource_name} 离线下载超时")
-        #
-        #     # 为失败重试也使用时间戳ID
-        #     retry_task_id = str(int(time.time() * 1000))
-        #
-        #     # 将重试任务数据存储到全局字典中
-        #     if not hasattr(init, 'pending_tasks'):
-        #         init.pending_tasks = {}
-        #
-        #     init.pending_tasks[retry_task_id] = {
-        #         "user_id": user_id,
-        #         "action": "retry_download",
-        #         "selected_path": selected_path,
-        #         "resource_name": resource_name,
-        #         "link": link,
-        #         "add2retry": True
-        #     }
-        #
-        #     # 提供重试选项
-        #     keyboard = [
-        #         [InlineKeyboardButton("指定TMDB名称并添加到重试列表", callback_data=f"rename_{retry_task_id}")],
-        #         [InlineKeyboardButton("取消", callback_data="cancel_download")]
-        #     ]
-        #     reply_markup = InlineKeyboardMarkup(keyboard)
-        #     message = f"`{link}`\n\n😭 离线下载超时，请选择后续操作："
-        #
-        #     add_task_to_queue(user_id, None, message=message, keyboard=reply_markup)
+            offline_success = init.openapi_115.offline_download_specify_path(link, selected_path)
+            if not offline_success:
+                add_task_to_queue(user_id, f"{init.IMAGE_PATH}/male023.png", message=f"❌ 离线遇到错误！")
+                return
 
-    except Exception as e:
-        init.logger.error(f"💀下载遇到错误: {str(e)}")
-        add_task_to_queue(user_id, f"{init.IMAGE_PATH}/male023.png",
-                            message=f"❌ 下载任务执行出错: {escape_markdown(str(e), version=2)}")
-    finally:
-        # 清除云端任务，避免重复下载
-        # init.openapi_115.del_offline_task(info_hash, del_source_file=0)
-        pass
+            # 检查下载状态
+            download_success, resource_name, info_hash = init.openapi_115.check_offline_download_success(link)
+
+            if download_success:
+                init.logger.info(f"✅ {resource_name} 离线下载成功！")
+                time.sleep(1)
+
+                # 处理下载结果
+                final_path = f"{selected_path}/{resource_name}"
+                if init.openapi_115.is_directory(final_path):
+                    # 如果下载的内容是目录，清除垃圾文件
+                    init.openapi_115.auto_clean_all(final_path)
+                else:
+                    # 如果下载的内容是文件，为文件套一个文件夹
+                    temp_folder = Path(resource_name).stem
+                    init.openapi_115.create_dir_for_file(selected_path, temp_folder)
+                    # 移动文件到临时目录
+                    init.openapi_115.move_file(final_path, f"{selected_path}/{temp_folder}")
+                    final_path = f"{selected_path}/{temp_folder}"
+                    resource_name = temp_folder
+
+                # 为避免callback_data长度限制，使用时间戳作为唯一标识符
+                task_id = str(int(time.time() * 1000))  # 毫秒时间戳作为唯一ID
+
+                # 将任务数据存储到全局字典中（临时存储）
+                if not hasattr(init, 'pending_tasks'):
+                    init.pending_tasks = {}
+
+                init.pending_tasks[task_id] = {
+                    "user_id": user_id,
+                    "action": "manual_rename",
+                    "final_path": final_path,
+                    "resource_name": resource_name,
+                    "selected_path": selected_path,
+                    "link": link,
+                    "add2retry": False
+                }
+
+                # 发送下载成功通知，包含选择按钮
+                keyboard = [
+                    [InlineKeyboardButton("指定标准的TMDB名称", callback_data=f"rename_{task_id}")],
+                    [InlineKeyboardButton("取消", callback_data=f"cancel_{task_id}")],
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                movie_name = get_movie_tmdb_name_with_ai(resource_name)  # 预调用AI接口，提前准备
+                if movie_name:
+                    message = f"✅ \\[`{resource_name}`\\]离线下载完成\\!\n\n根据AI识别，推荐的TMDB名称是：`{movie_name}`\n\n请确认！"
+                else:
+                    message = f"✅ \\[`{resource_name}`\\]离线下载完成\\!\n\n如需削刮，请为资源指定TMDB的标准名称！"
+
+                add_task_to_queue(user_id, None, message=message, keyboard=reply_markup)
+
+            else:
+                init.logger.warn(f"❌ {resource_name} 离线下载超时 继续等待")
+
+            # else:
+            #     # 下载超时，删除任务并提供选择
+            #     init.openapi_115.del_offline_task(info_hash)
+            #     init.logger.warn(f"❌ {resource_name} 离线下载超时")
+            #
+            #     # 为失败重试也使用时间戳ID
+            #     retry_task_id = str(int(time.time() * 1000))
+            #
+            #     # 将重试任务数据存储到全局字典中
+            #     if not hasattr(init, 'pending_tasks'):
+            #         init.pending_tasks = {}
+            #
+            #     init.pending_tasks[retry_task_id] = {
+            #         "user_id": user_id,
+            #         "action": "retry_download",
+            #         "selected_path": selected_path,
+            #         "resource_name": resource_name,
+            #         "link": link,
+            #         "add2retry": True
+            #     }
+            #
+            #     # 提供重试选项
+            #     keyboard = [
+            #         [InlineKeyboardButton("指定TMDB名称并添加到重试列表", callback_data=f"rename_{retry_task_id}")],
+            #         [InlineKeyboardButton("取消", callback_data="cancel_download")]
+            #     ]
+            #     reply_markup = InlineKeyboardMarkup(keyboard)
+            #     message = f"`{link}`\n\n😭 离线下载超时，请选择后续操作："
+            #
+            #     add_task_to_queue(user_id, None, message=message, keyboard=reply_markup)
+
+        except Exception as e:
+            init.logger.error(f"💀下载遇到错误: {str(e)}")
+            add_task_to_queue(user_id, f"{init.IMAGE_PATH}/male023.png",
+                                message=f"❌ 下载任务执行出错: {escape_markdown(str(e), version=2)}")
+        finally:
+            # 清除云端任务，避免重复下载
+            # init.openapi_115.del_offline_task(info_hash, del_source_file=0)
+            pass
 
 async def handle_manual_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理手动重命名的回调"""

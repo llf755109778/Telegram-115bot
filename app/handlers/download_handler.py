@@ -404,17 +404,24 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                 target_msgs_to_download = await get_list(link)
                 if not target_msgs_to_download:
                     add_task_to_queue(user_id, None, message="open115 暂不支持转存")
-
+                if not task_info:
+                    task_info = {}  #
                 # 4. 组装任务并提交给 video_manager
                 if target_msgs_to_download:
                     for m in target_msgs_to_download:
                         # 这里的 task_info 需要根据你的 VideoDownloadManager 结构填充
                         # 特别注意：如果是多文件下载，task_id 可能需要带序号或 unique 处理
-                        task_info["task_id"] = f"{task_info['task_id']}_{m.id}"
-                        task_info["file_name"] = m.file.name or f"video_{m.id}.mp4"
-                        task_info["file_size"] = m.file.size
-                        task_info["message"] = m
-                        await video_manager.add_task(task_info)
+                        current_item_task = task_info.copy()
+
+                        current_item_task["task_id"] = f"{task_info.get('task_id', 'None')}_{m.id}"
+                        if m.file and "name" in m.file:
+                            current_item_task["file_name"] = m.file.name
+                        else:
+                            current_item_task["file_name"] = f"video_{m.id}.mp4"
+                        if m.file and "size" in m.file:
+                            current_item_task["file_size"] = m.file.size
+                        current_item_task["message"] = m
+                        await video_manager.add_task(current_item_task)
 
                     # 成功加入队列后的通知
                     add_task_to_queue(user_id, None,

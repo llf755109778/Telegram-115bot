@@ -16,7 +16,7 @@ class VideoDownloadManager:
         # 正在进行的任务 {task_id: task_info}
         self.active_tasks = {}
         # 最大并发数
-        self.max_concurrent_tasks = 3
+        self.max_concurrent_tasks = 2
         # 当前并发数
         self.current_tasks = 0
         # 任务锁

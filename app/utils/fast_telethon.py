@@ -12,6 +12,7 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
     使用多线程分片下载 Telegram 文件
     """
     try:
+        message = await client.get_messages(message.peer_id, ids=message.id)
         media = message.media
         document = getattr(media, 'document', None)
         
@@ -36,7 +37,7 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
             return await client.download_media(message, file=file_path, progress_callback=progress_callback)
 
         # 分片大小 512KB
-        part_size = 512 * 1024 
+        part_size = 1024 * 1024
         
         # 确保目录存在
         os.makedirs(os.path.dirname(file_path), exist_ok=True)

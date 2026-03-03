@@ -318,7 +318,7 @@ def save_failed_download_to_db(title, magnet, save_path):
                 init.logger.info(f"[{title}]已添加到重试列表")
     except Exception as e:
         raise str(e)
-download_semaphore = asyncio.Semaphore(5)
+download_semaphore = asyncio.Semaphore(2)
 
 
 async def get_list(link: str):
@@ -376,13 +376,18 @@ async def get_list(link: str):
                 future_msgs = await init.tg_user_client.get_messages(peer, limit=50, offset_id=target_msg.id,
                                                                      reverse=True)
 
-                found_group_id = None
                 for f_msg in future_msgs:
+                    # 优先级 1：如果是媒体组的一部分
                     if f_msg.grouped_id:
-                        found_group_id = f_msg.grouped_id
-                        # 再次过滤出该组的所有成员
-                        target_msgs_to_download = [m for m in future_msgs if m.grouped_id == found_group_id]
-                        break
+                        # 把这 50 条里属于这一组的全部捞出来
+                        target_msgs_to_download = [m for m in future_msgs if m.grouped_id == f_msg.grouped_id]
+                        return target_msgs_to_download  # 拿完直接闪人，不看后面的了
+
+                    # 优先级 2：如果是单体视频
+                    if f_msg.video or (f_msg.document and 'video' in (f_msg.document.mime_type or '')):
+                        init.logger.info(f"拦截到单体视频: {f_msg.id}")
+                        return [f_msg]  # 包装成列表返回，保持格式统一
+
             return target_msgs_to_download
     except Exception as e:
         init.logger.error(f"获取消息失败: {e}")
@@ -414,12 +419,12 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                         current_item_task = task_info.copy()
 
                         current_item_task["task_id"] = f"{task_info.get('task_id', 'None')}_{m.id}"
-                        if m.file and "name" in m.file:
+                        if m.file:
                             current_item_task["file_name"] = m.file.name
+                            current_item_task["file_size"] = m.file.size
                         else:
                             current_item_task["file_name"] = f"video_{m.id}.mp4"
-                        if m.file and "size" in m.file:
-                            current_item_task["file_size"] = m.file.size
+                            current_item_task["file_size"] = 0
                         current_item_task["message"] = m
                         await video_manager.add_task(current_item_task)
 

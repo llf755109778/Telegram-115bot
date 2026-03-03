@@ -21,7 +21,16 @@ class VideoDownloadManager:
         self.current_tasks = 0
         # 任务锁
         self.lock = asyncio.Lock()
-        
+
+    def get_queue_status(self):
+        """获取当前队列状态摘要"""
+        # 获取正在运行的任务名
+        active_list = [task['file_name'] for task in self.active_tasks.values()]
+
+        # 获取排队中的任务数量 (asyncio.Queue 不直接支持遍历，但可以获取大小)
+        waiting_count = self.queue.qsize()
+
+        return active_list, waiting_count
     async def add_task(self, task_info):
         """添加下载任务"""
         await self.queue.put(task_info)

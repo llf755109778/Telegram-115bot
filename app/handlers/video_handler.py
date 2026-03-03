@@ -351,10 +351,30 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
                 await query.edit_message_text("🛑 正在取消任务...")
 
 
+async def show_video_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """显示当前视频下载队列状态"""
+
+    active_list, waiting_count = video_manager.get_queue_status()
+
+    status_text = "<b>📽️ 视频下载队列状态</b>\n\n"
+
+    if not active_list and waiting_count == 0:
+        status_text += "📭 当前没有正在运行或排队的任务。"
+    else:
+        if active_list:
+            status_text += "<b>⏳ 正在下载:</b>\n"
+            for i, name in enumerate(active_list, 1):
+                status_text += f"{i}. <code>{name}</code>\n"
+
+        if waiting_count > 0:
+            status_text += f"\n<b>📦 排队中:</b> {waiting_count} 个任务"
+
+    await update.message.reply_text(status_text, parse_mode="html")
+
 def register_video_handlers(application):
     # 注册视频消息处理器
     application.add_handler(MessageHandler(filters.VIDEO, save_video2115))
-    
+    application.add_handler(CommandHandler("queue", show_video_queue))
     # 注册重命名输入处理器 (只处理文本，且非命令)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_rename_input))
     

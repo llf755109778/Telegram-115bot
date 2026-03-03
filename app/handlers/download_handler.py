@@ -376,6 +376,8 @@ async def get_list(link: str):
 async def download_task(link:str, selected_path, user_id, dl_url_type=None, task_info=None):
     async with download_semaphore:
         """异步下载任务"""
+        init.logger.info(f"开始解析：{link} 类型：{dl_url_type}")
+
         from app.utils.message_queue import add_task_to_queue
         info_hash = ""
         try:
@@ -384,7 +386,7 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                     # "file_size": video_info['file_size'],
                     # "message": target_msg,
                 # 获取当前消息 如果当前消息是媒体组的一部分 下载这个媒体组，如果不是媒体组并且是视频 下载它，如果不是媒体组并且不是视频 获取后面的50消息 找到一个媒体组的然后下载
-                target_msgs_to_download = get_list(link)
+                target_msgs_to_download = await get_list(link)
                 if not target_msgs_to_download:
                     add_task_to_queue(user_id, None, message="open115 暂不支持转存")
 

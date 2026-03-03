@@ -91,8 +91,15 @@ async def select_main_category(update: Update, context: ContextTypes.DEFAULT_TYP
 
             await query.edit_message_text("✅ 已为您添加到下载队列！\n请稍后~")
 
+            task_info = {
+                "save_path": last_save_path,
+                "context": context,
+                "task_id": str(uuid.uuid4())[:8],
+                "chat_id": update.effective_chat.id,
+                "message_id": query.message.message_id  # 更新这条消息的状态
+            }
             # 使用全局线程池异步执行下载任务
-            context.application.create_task(download_task(link, last_save_path, user_id))
+            context.application.create_task(download_task(link, last_save_path, user_id, task_info))
             return ConversationHandler.END
         else:
             await query.edit_message_text("❌ 未找到最后一次保存路径，请重新选择分类")

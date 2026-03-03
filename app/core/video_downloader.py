@@ -3,6 +3,7 @@ import asyncio
 import os
 import hashlib
 import math
+import re
 from datetime import datetime
 from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -52,10 +53,10 @@ class VideoDownloadManager:
         """处理队列中的任务"""
         while True:
             async with self.lock:
+                # init.logger.info(f"_process_queue 正在运行的任务：{self.current_tasks}")
                 if self.current_tasks >= self.max_concurrent_tasks:
                     # 达到最大并发数，等待
-                    await asyncio.sleep(1)
-                    continue
+                    break
                 
                 if self.queue.empty():
                     # 队列为空，退出循环
@@ -64,27 +65,31 @@ class VideoDownloadManager:
                 # 获取下一个任务
                 task_info = await self.queue.get()
                 self.current_tasks += 1
+                # init.logger.info(f"_process_queue  self.current_tasks += 1 正在运行的任务：{self.current_tasks}")
                 self.active_tasks[task_info['task_id']] = task_info
                 
             # 启动任务
+            # init.logger.info(f"_process_queue**********asyncio.create_task(self._run_task(task_info))")
             asyncio.create_task(self._run_task(task_info))
 
     async def _run_task(self, task_info):
         """执行单个下载任务"""
         task_id = task_info['task_id']
         file_name = task_info['file_name']
-        file_size = task_info['file_size']
-        save_path = task_info['save_path']
-        message = task_info['message']
-        context = task_info['context']
-        chat_id = task_info['chat_id']
-        message_id = task_info['message_id']
-        
-        temp_file_path = f"{init.TEMP}/{file_name}"
-        cancel_event = asyncio.Event()
-        task_info['cancel_event'] = cancel_event
-        
+        # init.logger.info(f"_run_task 下载 {task_id}————{file_name}")
+
         try:
+
+            file_size = task_info['file_size']
+            save_path = task_info['save_path']
+            message = task_info['message']
+            context = task_info['context']
+            chat_id = task_info['chat_id']
+            message_id = task_info['message_id']
+
+            temp_file_path = f"{init.TEMP}/{file_name}"
+            cancel_event = asyncio.Event()
+            task_info['cancel_event'] = cancel_event
             # 更新状态：开始下载
             await self._update_status(context, chat_id, message_id, 
                                     f"⬇️ 正在下载: {file_name}\n等待队列...", 
@@ -117,6 +122,7 @@ class VideoDownloadManager:
                 threads=8,
                 cancel_event=cancel_event
             )
+            # init.logger.info(f"_run_task 下载完成 {task_id}————{file_name}")
 
             if not saved_path:
                 if cancel_event.is_set():
@@ -136,6 +142,7 @@ class VideoDownloadManager:
 
             await self._update_status(context, chat_id, message_id, f"☁️ 正在上传到115: {Path(final_path).name}", task_id)
             await self._upload_to_115(final_path, save_path, context, chat_id, message_id, task_id)
+            # init.logger.info(f"_run_task 上传完成 {task_id}————{file_name}")
 
         except asyncio.CancelledError:
             init.logger.info(f"任务 {task_id} 已取消")
@@ -147,19 +154,47 @@ class VideoDownloadManager:
             self._cleanup(temp_file_path)
         finally:
             async with self.lock:
+                # init.logger.info(f"_run_task current_tasks {self.current_tasks}")
                 self.current_tasks -= 1
+                # init.logger.info(f"_run_task current_tasks--- {self.current_tasks}")
+
                 if task_id in self.active_tasks:
                     del self.active_tasks[task_id]
             # 继续处理队列
             asyncio.create_task(self._process_queue())
 
-    async def _upload_to_115(self, file_path, save_dir, context, chat_id, message_id, task_id):
+    @staticmethod
+    def is_date_directory(save_dir):
+        if not save_dir:
+            return False
+
+        # 提取最后一层目录名
+        # 例如: /home/user/2024-05 -> last_part = "2024-05"
+        last_part = Path(save_dir).name
+
+        # 正则解释：
+        # ^\d{4}            : 以4位数字开头（年份）
+        # ([-_ /]?\d{2})?   : 可选的月份（前面带可选的分隔符 - _ / 或空格）
+        # ([-_ /]?\d{2})?   : 可选的日期
+        # $                 : 结尾
+        date_pattern = r"^\d{4}([-_ /]?\d{2})?([-_ /]?\d{2})?$"
+
+        if re.match(date_pattern, last_part):
+            return True
+        return False
+
+    async def _upload_to_115(self, file_path, save_dir: str, context, chat_id, message_id, task_id):
         """上传文件到115"""
         try:
             file_size = os.path.getsize(file_path)
             file_name = Path(file_path).name
             sha1 = self._calculate_sha1(file_path)
-            
+            current_date = datetime.now().strftime("%Y%m%d")
+            if save_dir and not self.is_date_directory(save_dir):
+                # 确保路径拼接正确（处理末尾是否有斜杠的情况）
+                save_dir = str(Path(save_dir) / current_date)
+            elif not save_dir:
+                save_dir = str(Path('/AV/短片') / current_date)
             # 确保目录存在
             init.openapi_115.create_dir_recursive(save_dir)
             
@@ -181,7 +216,7 @@ class VideoDownloadManager:
                 await self._update_status(context, chat_id, message_id, text, task_id, show_cancel=False)
             else:
                 await self._update_status(context, chat_id, message_id, "❌ 上传失败", task_id, show_cancel=False)
-                
+
         finally:
             self._cleanup(file_path)
 
@@ -218,6 +253,7 @@ class VideoDownloadManager:
                 reply_markup=reply_markup
             )
         except Exception as e:
+            init.logger.error(f"_update_status : {e}")
             pass
 
     def _format_size(self, size):

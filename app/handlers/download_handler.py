@@ -340,13 +340,13 @@ async def get_list(link: str):
         target_msg = await init.tg_user_client.get_messages(peer, ids=msg_id)
 
         if target_msg:
-            target_msgs_to_download = []
+            target_msgs_to_download = None
 
             # 1. 检查是否是媒体组的一部分
             if target_msg.grouped_id:
                 init.logger.info(f"检测到媒体组，grouped_id: {target_msg.grouped_id}")
                 # 获取相同 grouped_id 的所有消息（通常在前后几十条范围内）
-                group_msgs = await init.tg_user_client.get_messages(peer, limit=100, offset_id=target_msg.id + 50)
+                group_msgs = await init.tg_user_client.get_messages(peer, limit=40, offset_id=target_msg.id + 20)
                 target_msgs_to_download = [m for m in group_msgs if m.grouped_id == target_msg.grouped_id]
 
             # 2. 如果不是媒体组，检查是否是单个视频
@@ -358,7 +358,7 @@ async def get_list(link: str):
             else:
                 init.logger.info("当前消息非视频/媒体组，正在向后搜索 50 条消息寻找媒体组...")
                 # 获取目标消息之后的 50 条消息
-                future_msgs = await init.tg_user_client.get_messages(entity, limit=50, offset_id=target_msg.id,
+                future_msgs = await init.tg_user_client.get_messages(peer, limit=50, offset_id=target_msg.id,
                                                                      reverse=True)
 
                 found_group_id = None
@@ -368,31 +368,10 @@ async def get_list(link: str):
                         # 再次过滤出该组的所有成员
                         target_msgs_to_download = [m for m in future_msgs if m.grouped_id == found_group_id]
                         break
-
-            # 4. 组装任务并提交给 video_manager
-            if target_msgs_to_download:
-                for m in target_msgs_to_download:
-                    # 这里的 task_info 需要根据你的 VideoDownloadManager 结构填充
-                    # 特别注意：如果是多文件下载，task_id 可能需要带序号或 unique 处理
-                    sub_task_info = {
-                        "task_id": f"{task_id}_{m.id}",
-                        "file_name": m.file.name or f"video_{m.id}.mp4",
-                        "file_size": m.file.size,
-                        "save_path": selected_path,
-                        "message": m,  # 传入当前这条消息对象供下载器使用
-                        "context": context,
-                        "chat_id": entity,
-                        "message_id": message_id  # 这里的 ID 可以保持不变，用于更新同一个进度条
-                    }
-                    await video_manager.add_task(sub_task_info)
-
-                # 成功加入队列后的通知
-                add_task_to_queue(user_id, None,
-                                  message=f"✅ 已成功识别并添加 {len(target_msgs_to_download)} 个文件到下载队列")
-            else:
-                add_task_to_queue(user_id, None, message="❌ 未找到可下载的视频或媒体组")
-
-    return
+            return target_msgs_to_download
+    except Exception as e:
+        init.logger.error(f"获取消息失败: {e}")
+    return None
 
 async def download_task(link:str, selected_path, user_id, dl_url_type=None, task_info=None):
     async with download_semaphore:
@@ -405,10 +384,26 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                     # "file_size": video_info['file_size'],
                     # "message": target_msg,
                 # 获取当前消息 如果当前消息是媒体组的一部分 下载这个媒体组，如果不是媒体组并且是视频 下载它，如果不是媒体组并且不是视频 获取后面的50消息 找到一个媒体组的然后下载
-                videoList = get_list(link)
-                if not videoList:
+                target_msgs_to_download = get_list(link)
+                if not target_msgs_to_download:
                     add_task_to_queue(user_id, None, message="open115 暂不支持转存")
-                await video_manager.add_task(task_info)
+
+                # 4. 组装任务并提交给 video_manager
+                if target_msgs_to_download:
+                    for m in target_msgs_to_download:
+                        # 这里的 task_info 需要根据你的 VideoDownloadManager 结构填充
+                        # 特别注意：如果是多文件下载，task_id 可能需要带序号或 unique 处理
+                        task_info["task_id"] = f"{task_info['task_id']}_{m.id}"
+                        task_info["file_name"] = m.file.name or f"video_{m.id}.mp4"
+                        task_info["file_size"] = m.file.size
+                        task_info["message"] = m
+                        await video_manager.add_task(task_info)
+
+                    # 成功加入队列后的通知
+                    add_task_to_queue(user_id, None,
+                                      message=f"✅ 已成功识别并添加 {len(target_msgs_to_download)} 个文件到下载队列")
+                else:
+                    add_task_to_queue(user_id, None, message="❌ 未找到可下载的视频或媒体组")
                 # HTTP下载
                 return
 

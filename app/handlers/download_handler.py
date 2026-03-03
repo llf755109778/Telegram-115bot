@@ -12,6 +12,8 @@ import re
 import time
 from pathlib import Path
 
+from telethon import types
+
 from app.core.video_downloader import video_manager
 from app.utils.cover_capture import get_movie_cover
 from app.utils.message_queue import add_task_to_queue
@@ -334,7 +336,20 @@ async def get_list(link: str):
     # 如果是私有频道 (c/xxx)，ID 需要转换成 Telethon 识别的格式
     if "/c/" in link:
         peer = int(f"-100{peer}")  # 私有频道 ID 补全
+    else:
+        types.PeerUser(int(peer))
+    # 检查和建立 Telegram 用户客户端连接
+    try:
+        if not init.tg_user_client.is_connected():
+            init.logger.info("🔄 正在验证 Telegram 用户客户端连接...")
+            await init.tg_user_client.connect()
 
+        if not await init.tg_user_client.is_user_authorized():
+            return
+
+    except Exception as e:
+        init.logger.error(f"Telegram 用户客户端连接失败: {e}")
+        return
     try:
         # 获取目标消息
         target_msg = await init.tg_user_client.get_messages(peer, ids=msg_id)
@@ -381,7 +396,7 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
         from app.utils.message_queue import add_task_to_queue
         info_hash = ""
         try:
-            if dl_url_type == DownloadUrlType.HTTP and link.startswith(DownloadUrlType.LINK_tg.__str__()):
+            if link.startswith(DownloadUrlType.LINK_tg.__str__()):
                     # "file_name": video_info['file_name'],
                     # "file_size": video_info['file_size'],
                     # "message": target_msg,
@@ -405,7 +420,7 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                     add_task_to_queue(user_id, None,
                                       message=f"✅ 已成功识别并添加 {len(target_msgs_to_download)} 个文件到下载队列")
                 else:
-                    add_task_to_queue(user_id, None, message="❌ 未找到可下载的视频或媒体组")
+                    add_task_to_queue(user_id, None, message="❌ 未找到可下载的视频或媒体组或登录有问题")
                 # HTTP下载
                 return
 

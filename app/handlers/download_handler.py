@@ -337,7 +337,7 @@ async def get_list(link: str):
     if "/c/" in link:
         peer = int(f"-100{peer}")  # 私有频道 ID 补全
     else:
-        types.PeerUser(int(peer))
+        peer = types.PeerUser(int(peer))
     # 检查和建立 Telegram 用户客户端连接
     try:
         if not init.tg_user_client.is_connected():

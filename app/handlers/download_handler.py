@@ -99,7 +99,7 @@ async def select_main_category(update: Update, context: ContextTypes.DEFAULT_TYP
                 "message_id": query.message.message_id  # 更新这条消息的状态
             }
             # 使用全局线程池异步执行下载任务
-            context.application.create_task(download_task(link, last_save_path, user_id, task_info))
+            context.application.create_task(download_task(link, last_save_path, user_id, task_info=task_info))
             return ConversationHandler.END
         else:
             await query.edit_message_text("❌ 未找到最后一次保存路径，请重新选择分类")
@@ -433,6 +433,7 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                             current_item_task["file_name"] = f"video_{m.id}.mp4"
                             current_item_task["file_size"] = 0
                         current_item_task["message"] = m
+                        init.logger.info(f"current_item_task : {current_item_task}")
                         await video_manager.add_task(current_item_task)
 
                     # 成功加入队列后的通知

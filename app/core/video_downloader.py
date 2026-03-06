@@ -104,7 +104,7 @@ class VideoDownloadManager:
                     raise asyncio.CancelledError("用户取消下载")
                 
                 now = datetime.now()
-                if (now - last_update_time).total_seconds() >= 3:
+                if (now - last_update_time).total_seconds() >= 4 * video_manager.max_concurrent_tasks + 4:
                     percentage = (current / total) * 100 if total > 0 else 0
                     progress_bar = self._create_progress_bar(percentage)
                     text = (f"⬇️ 正在下载: {file_name}\n"
@@ -188,26 +188,36 @@ class VideoDownloadManager:
         try:
             file_size = os.path.getsize(file_path)
             file_name = Path(file_path).name
-            sha1 = self._calculate_sha1(file_path)
             current_date = datetime.now().strftime("%Y%m%d")
             if save_dir and not self.is_date_directory(save_dir):
                 # 确保路径拼接正确（处理末尾是否有斜杠的情况）
                 save_dir = str(Path(save_dir) / current_date)
             elif not save_dir:
                 save_dir = str(Path('/AV/短片') / current_date)
-            # 确保目录存在
-            init.openapi_115.create_dir_recursive(save_dir)
-            
+
+            loop = asyncio.get_running_loop()
+
+            def sync_task():
+                sha1 = self._calculate_sha1(file_path)  # 假设这是同步计算
+                init.openapi_115.create_dir_recursive(save_dir)  # 假设这是同步请求
+
+                # 确保目录存在
+                init.openapi_115.create_dir_recursive(save_dir)
+                return sha1
+            sha1 = await loop.run_in_executor(None, sync_task)
+
             # 上传
-            is_upload, bingo = init.openapi_115.upload_file(
-                target=save_dir,
-                file_name=file_name,
-                file_size=file_size,
-                fileid=sha1,
-                file_path=file_path,
-                request_times=1
+            is_upload, bingo = await loop.run_in_executor(
+                None,
+                    lambda: init.openapi_115.upload_file(
+                    target=save_dir,
+                    file_name=file_name,
+                    file_size=file_size,
+                    fileid=sha1,
+                    file_path=file_path,
+                    request_times=1
+                )
             )
-            
             if is_upload:
                 status = "⚡ 秒传成功" if bingo else "✅ 上传成功"
                 text = (f"{status}\n"

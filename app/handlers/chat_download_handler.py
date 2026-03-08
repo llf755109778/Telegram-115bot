@@ -10,6 +10,8 @@ from telegram.ext import ContextTypes, CommandHandler
 
 import init
 
+from app.core.open_115 import calculate_sha1
+
 # --- 存储和配置 ---
 CONFIG_FILE = "/config/sync_config.json"
 caption_cache = OrderedDict()
@@ -178,7 +180,7 @@ async def process_upload(file_path, save_dir):
     def sync_task():
         try:
             file_name = Path(file_path).name
-            sha1 = init.openapi_115.calculate_sha1(file_path)
+            sha1 = calculate_sha1(file_path)
             init.openapi_115.create_dir_recursive(save_dir)
             res = init.openapi_115.upload_file(
                 target=save_dir, file_name=file_name,

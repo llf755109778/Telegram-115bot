@@ -2,15 +2,17 @@ import asyncio
 import os
 import re
 import json
+import time
 from pathlib import Path
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 
 import init
 
-# --- 存储和命名辅助 ---
+# --- 存储和配置 ---
 CONFIG_FILE = "/config/sync_config.json"
 caption_cache = {}
+download_queue = asyncio.Queue()
 
 
 def load_progress():
@@ -54,142 +56,163 @@ def get_ext(msg):
         ext = "." + ext
     return ext
 
-# --- 主指令函数 ---
-async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# --- 后台 Worker 进程 ---
+async def download_worker(bot):
     """
-    指令回调函数：/chatDown [可选群组ID]
+    独立后台 Worker：负责从队列取任务，并处理下载/上传
     """
-    # 1. 初始反馈
-    msg_status = await update.message.reply_text("🔎 正在初始化搬运任务...")
+    init.logger.info("🚀 chatDown 后台 Worker 已就绪，等待任务中...")
 
-    # 2. 确定目标频道/群组
-    # 默认使用配置中的 CHAT_ID，或者从指令参数获取
-    target_chat = None
-    if context.args:
-        arg = context.args[0]
-        # 如果是链接，Telethon 会自动处理，如果是数字 ID 则转为 int
-        if arg.startswith("https://t.me/") or arg.startswith("t.me/"):
-            target_chat = arg
-        elif arg.startswith("-100") or arg.isdigit():
-            target_chat = int(arg)
-        else:
-            target_chat = arg  # 处理 @username
+    while True:
+        task = await download_queue.get()
+        msg = task['msg']
+        target_chat = task['target_chat']
+        user_chat_id = task['chat_id']
 
-    last_id = load_progress()
-    items = []
-
-    # 检查和建立 Telegram 用户客户端连接
-    try:
-        if not init.tg_user_client.is_connected():
-            init.logger.info("🔄 正在验证 Telegram 用户客户端连接...")
-            await init.tg_user_client.connect()
-
-        if not await init.tg_user_client.is_user_authorized():
-            return
-
-    except Exception as e:
-        init.logger.error(f"Telegram 用户客户端连接失败: {e}")
-        return
-
-    # 3. 使用 Telethon 客户端扫描新消息
-    # 注意：这里的 'client' 必须是你已经 start() 过的 Telethon TelegramClient 实例
-    async for msg in init.tg_user_client.iter_messages(target_chat, min_id=last_id):
-        if msg.photo or msg.video or msg.document:
-            items.append(msg)
-
-    if not items:
-        await msg_status.edit_text(f"☕ 已经是最新的了（上次进度: {last_id}）。")
-        return
-
-    # 反转列表：从旧到新处理，确保 Album 的第一张带文字的消息先被处理
-    items.reverse()
-    total = len(items)
-    await msg_status.edit_text(f"📦 发现 {total} 个新媒体，开始搬运并同步到 115...")
-
-    success_count = 0
-
-    # 4. 循环处理
-    for msg in items:
-        # --- Caption 补全 ---
-        group_id = msg.grouped_id
-        raw_cap = msg.text or ""
-        if group_id:
-            if raw_cap:
-                caption_cache[group_id] = sanitize_filename(raw_cap)
-            else:
-                raw_cap = caption_cache.get(group_id, "")
-
-        clean_cap = sanitize_filename(raw_cap) or "Untitled"
-
-        # --- 后缀与命名 ---
-        ext = get_ext(msg) or ".mp4"
-        gid_str = group_id if group_id else f"msg{msg.id}"
-        file_name = f"{clean_cap}_{gid_str}_{msg.id}{ext}"
-        local_path = os.path.join(init.TEMP, file_name)
-
-        # --- 下载 ---
-        # 更新机器人状态（每 5 个更新一次，避免被 Telegram 限制频率）
-        if success_count % 5 == 0:
-            await msg_status.edit_text(f"⏳ 正在搬运: {success_count}/{total}\n当前: {file_name[:20]}...")
+        start_time = time.time()
+        last_update_time = 0  # 用于控制 10s 更新频率
 
         try:
-            # 使用 Telethon 下载到本地临时目录
-            await init.tg_user_client.download_media(msg, file=local_path)
-
-            # --- 上传到 115 (核心逻辑) ---
-            # 这个 process_upload 是你之前写的：包含 run_in_executor 那个
-            # 它能保证在上传几 GB 的大文件时，主线程（机器人）依然能工作
+            # 1. 命名与路径预设
             chat_tag = sanitize_filename(str(target_chat).replace("-100", ""))
+            clean_cap = sanitize_filename(msg.text or "") or "Untitled"
+            ext = get_ext(msg)
+            file_name = f"[{chat_tag}]_{clean_cap}_{msg.id}{ext}"
+            local_path = os.path.join(init.TEMP, file_name)
+
+            # 发送状态初始化消息
+            file_size_mb = round(msg.file.size / 1024 / 1024, 2) if msg.file else 0
+            status_header = f"🎬 **任务开始**\n\n📢 来源: `{chat_tag}`\n📄 文件: `{file_name}`\n📦 大小: `{file_size_mb} MB`"
+            status_msg = await bot.send_message(chat_id=user_chat_id, text=status_header, parse_mode="Markdown")
+
+            # 2. 定义带频率控制的下载进度回调
+            async def progress_callback(current, total):
+                nonlocal last_update_time
+                now = time.time()
+                # 核心逻辑：每 10 秒更新一次回显
+                if now - last_update_time > 10:
+                    percent = current / total * 100
+                    speed = (current / 1024 / 1024) / (now - start_time + 0.1)  # MB/s
+                    bar = f"{'█' * int(percent // 10)}{'░' * (10 - int(percent // 10))}"
+
+                    progress_text = (
+                        f"{status_header}\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📥 进度: `{bar}` {percent:.1f}%\n"
+                        f"🚀 速度: `{speed:.2f} MB/s`\n"
+                        f"⏰ 已耗时: `{int(now - start_time)}s`"
+                    )
+                    try:
+                        await status_msg.edit_text(progress_text, parse_mode="Markdown")
+                        last_update_time = now
+                    except:
+                        pass
+
+            # 3. 开始下载
+            init.logger.info(f"开始搬运消息 {msg.id} -> {file_name}")
+            await init.tg_user_client.download_media(msg, file=local_path, progress_callback=progress_callback)
+
+            # 4. 同步至 115
+            await status_msg.edit_text(f"{status_header}\n\n✅ 下载完成！正在同步到 115 网盘...", parse_mode="Markdown")
+
             date_folder = msg.date.strftime("%Y-%m")
             remote_target = f"/AV/Telegram_Sync/{chat_tag}/{date_folder}"
-            success, bingo = await process_upload(local_path, remote_target)
 
+            success, result = await process_upload(local_path, remote_target)
+
+            # 5. 结果结算
+            total_duration = round(time.time() - start_time, 1)
             if success:
-                # 成功后：删除本地 + 更新进度
-                if os.path.exists(local_path):
-                    os.remove(local_path)
+                if os.path.exists(local_path): os.remove(local_path)
                 save_progress(msg.id)
-                success_count += 1
+                final_text = (
+                    f"✨ **同步成功！**\n\n"
+                    f"📁 目录: `{remote_target}`\n"
+                    f"📝 文件: `{file_name}`\n"
+                    f"⏱️ 总耗时: `{total_duration}s`"
+                )
+                await status_msg.edit_text(final_text, parse_mode="Markdown")
+                init.logger.info(f"搬运完成: {file_name}，耗时 {total_duration}s")
             else:
-                await update.message.reply_text(f"⚠️ 上传 115 失败: {file_name}")
+                await status_msg.edit_text(f"❌ **115 上传失败**\n文件: `{file_name}`\n错误: {result}")
 
         except Exception as e:
-            await update.message.reply_text(f"❌ 处理消息 {msg.id} 时出错: {str(e)}")
-
-    # 5. 完成总结
-    await msg_status.edit_text(f"✅ 同步任务圆满完成！\n共同步资源: {success_count} 个\n最新 ID 记录: {last_id}")
-    caption_cache.clear()
-
-# --- 在主程序中注册 ---
-def register_chatDown_handlers(application):
-    application.add_handler(CommandHandler("chatDown", chatDown))
-    init.logger.info("✅ chatDown处理器已注册")
+            init.logger.error(f"Worker 异常: {str(e)}")
+            await bot.send_message(chat_id=user_chat_id, text=f"⚠️ 搬运 ID {msg.id} 时出错: {str(e)}")
+        finally:
+            download_queue.task_done()
+            await asyncio.sleep(2)  # 给系统留点喘息时间
 
 
-
-# --- 补全 process_upload (之前讨论的 115 上传逻辑) ---
+# --- 异步上传到 115 ---
 async def process_upload(file_path, save_dir):
-    """
-    使用线程池执行 115 上传，防止阻塞机器人主线程
-    """
     loop = asyncio.get_running_loop()
 
-    # 这里的 init.openapi_115 对应你之前的 115 SDK 实例
     def sync_task():
-        file_size = os.path.getsize(file_path)
-        file_name = Path(file_path).name
-        # 假设你的 init.openapi_115 已经初始化
-        sha1 = init.openapi_115.calculate_sha1(file_path)
-        init.openapi_115.create_dir_recursive(save_dir)
+        try:
+            file_name = Path(file_path).name
+            sha1 = init.openapi_115.calculate_sha1(file_path)
+            init.openapi_115.create_dir_recursive(save_dir)
+            res = init.openapi_115.upload_file(
+                target=save_dir,
+                file_name=file_name,
+                file_size=os.path.getsize(file_path),
+                fileid=sha1,
+                file_path=file_path,
+                request_times=1
+            )
+            return True, res
+        except Exception as e:
+            return False, str(e)
 
-        return init.openapi_115.upload_file(
-            target=save_dir,
-            file_name=file_name,
-            file_size=file_size,
-            fileid=sha1,
-            file_path=file_path,
-            request_times=1
-        )
-
-    # 解决 process_upload 红线
     return await loop.run_in_executor(None, sync_task)
+
+
+# --- 指令入口 ---
+async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text(
+            "❌ 请输入频道链接或 ID。\n用法: `/chatDown https://t.me/xxx` 或 `/chatDown -100xxx`")
+        return
+
+    target_chat = context.args[0]
+    msg_status = await update.message.reply_text("🔍 正在扫描新资源并准备加入队列...")
+
+    last_id = load_progress()
+    count = 0
+
+    try:
+        if not init.tg_user_client.is_connected():
+            await init.tg_user_client.connect()
+
+        async for msg in init.tg_user_client.iter_messages(target_chat, min_id=last_id):
+            if msg.photo or msg.video or msg.document:
+                # 放入队列
+                await download_queue.put({
+                    'msg': msg,
+                    'target_chat': target_chat,
+                    'chat_id': update.effective_chat.id
+                })
+                count += 1
+
+        if count > 0:
+            await msg_status.edit_text(
+                f"✅ 扫描完成！\n已将 `{count}` 个新媒体加入后台队列。\n我会逐个处理并在此显示详细进度。")
+        else:
+            await msg_status.edit_text(f"☕ 频道已经是最新的了（上次进度: {last_id}）。")
+
+    except Exception as e:
+        init.logger.error(f"扫描频道出错: {e}")
+        await msg_status.edit_text(f"❌ 扫描频道失败: {e}")
+
+
+# --- 注册函数 ---
+def register_chatDown_handlers(application):
+    application.add_handler(CommandHandler("chatDown", chatDown))
+
+    # 启动后台协程，并传入 bot 实例
+    asyncio.get_event_loop().create_task(download_worker(application.bot))
+
+    if hasattr(init, 'logger') and init.logger:
+        init.logger.info("✅ chatDown 异步回显系统已就绪")

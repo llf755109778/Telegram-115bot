@@ -10,6 +10,7 @@ from telegram.helpers import escape_markdown
 
 # 导入init模块（此时__init__.py已经设置了模块路径）
 import init
+from app.handlers.chat_download_handler import register_chatDown_handlers
 
 from app.utils.message_queue import add_task_to_queue, queue_worker
 from app.handlers.auth_handler import register_auth_handlers
@@ -85,7 +86,7 @@ def get_help_info():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_info = get_help_info()
     await context.bot.send_message(chat_id=update.effective_chat.id, text=help_info, parse_mode="html", disable_web_page_preview=True)
-    
+
 async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init.load_yaml_config()
     init.logger.info("Reload configuration success:")
@@ -108,10 +109,10 @@ def start_async_loop():
         init.logger.info("事件循环已关闭")
 
 def send_start_message():
-    version = get_version()  
+    version = get_version()
     if init.openapi_115 is None:
         return
-    
+
     line1, line2, line3, line4 = init.openapi_115.welcome_message()
     if not line1:
         return
@@ -126,10 +127,10 @@ def send_start_message():
 {line5}
 
 发送 `/start` 查看操作说明"""
-        
+
         add_task_to_queue(
-            init.bot_config['allowed_user'], 
-            f"{init.IMAGE_PATH}/neuter010.png", 
+            init.bot_config['allowed_user'],
+            f"{init.IMAGE_PATH}/neuter010.png",
             message=formatted_message
         )
 
@@ -141,7 +142,7 @@ def update_logger_level():
     logging.getLogger('telegram.ext.Application').setLevel(logging.WARNING)
     logging.getLogger('telegram.ext.Updater').setLevel(logging.WARNING)
     logging.getLogger('telegram.Bot').setLevel(logging.WARNING)
-    
+
 def get_bot_menu():
     return  [
         BotCommand("start", "获取帮助信息"),
@@ -156,7 +157,7 @@ def get_bot_menu():
         BotCommand("sm", "订阅电影"),
         BotCommand("sync", "同步指定目录，并创建软链"),
         BotCommand("q", "退出当前会话")]
-    
+
 
 async def set_bot_menu(application):
     """异步设置Bot菜单"""
@@ -194,7 +195,7 @@ if __name__ == '__main__':
     # 调整telegram日志级别
     update_logger_level()
     token = init.bot_config['bot_token']
-    application = Application.builder().token(token).post_init(post_init).build()    
+    application = Application.builder().token(token).post_init(post_init).build()
 
     # 启动帮助
     start_handler = CommandHandler('start', start)
@@ -202,13 +203,13 @@ if __name__ == '__main__':
     # 重载配置
     reload_handler = CommandHandler('reload', reload)
     application.add_handler(reload_handler)
-    
+
     # 初始化115open对象
     if not init.initialize_115open():
         init.logger.error("115 OpenAPI客户端初始化失败，程序无法继续运行！")
         add_task_to_queue(
-            init.bot_config['allowed_user'], 
-            f"{init.IMAGE_PATH}/male023.png", 
+            init.bot_config['allowed_user'],
+            f"{init.IMAGE_PATH}/male023.png",
             message="❌ 115 OpenAPI客户端初始化失败，程序无法继续运行！\n请检查Token或115 AppID设置是否正确！"
         )
         # 等待消息队列处理完毕再退出
@@ -222,7 +223,9 @@ if __name__ == '__main__':
     register_auth_handlers(application)
     # 注册下载
     register_download_handlers(application)
-    # 注册电影订阅 
+    # 注册下载频道
+    register_chatDown_handlers(application)
+    # 注册电影订阅
     register_subscribe_movie_handlers(application)
     # 注册AV下载
     register_av_download_handlers(application)
@@ -238,7 +241,7 @@ if __name__ == '__main__':
     register_sync_handlers(application)
     # 注册视频
     register_video_handlers(application)
-    
+
     init.logger.info(f"USER_AGENT: {init.USER_AGENT}")
 
     # 启动机器人轮询

@@ -201,42 +201,54 @@ async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     target_chat = context.args[0]
-    msg_status = await update.message.reply_text("🔍 正在扫描并加入队列...")
+    # 先给用户一个初步反馈
+    msg_status = await update.message.reply_text("🔍 正在启动流式扫描...")
 
     last_id = load_progress()
     count = 0
+    batch_size = 100  # 每批处理多少条，防止刷屏和封号
 
     try:
         if not init.tg_user_client.is_connected():
             await init.tg_user_client.connect()
 
-        # 扫描时保持顺序，确保 grouped_id 的第一条消息先进入队列被处理
-        items = []
-        async for msg in init.tg_user_client.iter_messages(target_chat, min_id=last_id):
+        # 核心改进：直接流式遍历，不存入 items 列表
+        # reverse=True 表示从旧到新拉取，这样 grouped_id 的标题逻辑依然生效
+        async for msg in init.tg_user_client.iter_messages(
+                target_chat,
+                min_id=last_id,
+                reverse=True,  # 关键：从旧到新拉取，不需要再执行 .reverse()
+                limit=None  # 虽然是 None，但它是流式获取的
+        ):
             if msg.photo or msg.video or msg.document:
-                items.append(msg)
+                await download_queue.put({
+                    'msg': msg,
+                    'target_chat': target_chat,
+                    'chat_id': update.effective_chat.id
+                })
+                count += 1
 
-        items.reverse()  # 从旧到新
-
-        for m in items:
-            await download_queue.put({
-                'msg': m,
-                'target_chat': target_chat,
-                'chat_id': update.effective_chat.id
-            })
-            count += 1
+            # 每发现 100 个媒体，更新一次进度，让用户知道机器人在动
+            if count > 0 and count % batch_size == 0:
+                try:
+                    await msg_status.edit_text(f"🚀 已扫描并入队 `{count}` 个媒体...")
+                except:
+                    pass
+                # 稍微歇息一下，防止 Telegram 频繁请求限制
+                await asyncio.sleep(0.5)
 
         if count > 0:
-            await msg_status.edit_text(f"✅ 已添加 `{count}` 个任务到后台队列。")
+            await msg_status.edit_text(f"✅ 扫描任务完成！\n已将 `{count}` 个新任务排入流水线。")
         else:
-            await msg_status.edit_text(f"☕ 已经是最新进度: {last_id}")
+            await msg_status.edit_text(f"☕ 已经是最新进度，没有发现新媒体。")
 
     except Exception as e:
-        await msg_status.edit_text(f"❌ 错误: {e}")
+        init.logger.error(f"扫描异常: {e}")
+        await update.message.reply_text(f"❌ 扫描过程中断: {e}")
 
 
 def register_chatDown_handlers(application):
-    application.add_handler(CommandHandler("chatDown", chatDown))
+    application.add_handler(CommandHandler("chatdown", chatDown))
     asyncio.get_event_loop().create_task(download_worker(application.bot))
     if hasattr(init, 'logger') and init.logger:
         init.logger.info("✅ chatDown 异步系统(含标题缓存)已就绪")

@@ -149,7 +149,7 @@ def get_bot_menu():
         BotCommand("auth", "115扫码授权"),
         BotCommand("reload", "重载配置"),
         BotCommand("queue", "查看视频下载队列"),
-        BotCommand("chatDown", "搬运频道"),
+        BotCommand("chatdown", "搬运频道"),
         BotCommand("rl", "查看重试列表"),
         BotCommand("av", "指定番号下载"),
         BotCommand("csh", "手动爬取涩花数据"),

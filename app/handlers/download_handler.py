@@ -404,6 +404,28 @@ async def get_list(link: str):
         init.logger.error(f"获取消息失败: {e}")
     return None
 
+
+def get_ext(msg):
+    """识别媒体真实后缀"""
+    # 如果 Telegram 已经识别出了后缀，直接用
+    if msg.file and msg.file.ext:
+        return msg.file.ext if msg.file.ext.startswith('.') else f".{msg.file.ext}"
+
+    # 针对 Photo 对象的兜底识别
+    if msg.photo: return ".jpg"
+    if msg.video: return ".mp4"
+    if msg.audio: return ".mp3"
+    return ".bin"
+
+
+def sanitize_filename(name):
+    """净化文件名，防止 115 上传失败"""
+    import re
+    if not name: return ""
+    # 过滤掉 \ / : * ? " < > | 等网盘不支持的字符
+    name = re.sub(r'[\\/:*?"<>|#%&{}]', '', name)
+    return name.replace('\n', ' ').strip()[:80]
+
 async def download_task(link:str, selected_path, user_id, dl_url_type=None, task_info=None):
     async with download_semaphore:
         """异步下载任务"""
@@ -424,18 +446,41 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                     task_info = {}  #
                 # 4. 组装任务并提交给 video_manager
                 if target_msgs_to_download:
+                    chat_tag = "TG"
+                    try:
+                        parts = link.strip('/').split('/')
+                        if len(parts) >= 2:
+                            chat_tag = sanitize_filename(parts[-2])
+                    except:
+                        pass
                     for m in target_msgs_to_download:
                         # 这里的 task_info 需要根据你的 VideoDownloadManager 结构填充
                         # 特别注意：如果是多文件下载，task_id 可能需要带序号或 unique 处理
                         current_item_task = task_info.copy()
+                        # --- 1. 获取后缀 (解决图片/视频无后缀问题) ---
+                        ext = get_ext(m)
 
-                        current_item_task["task_id"] = f"{task_info.get('task_id', 'None')}_{m.id}"
-                        if m.file:
-                            current_item_task["file_name"] = m.file.name
-                            current_item_task["file_size"] = m.file.size
+                        # --- 2. 构造文件名 (手动控名，拒绝 Untitled) ---
+                        # 优先用 m.file.name，没有则用 [频道]_标题_ID.后缀
+                        raw_name = getattr(m.file, 'name', None)
+                        if not raw_name:
+                            # 尝试拿消息文字前15个字，没字就叫 Media
+                            clean_cap = sanitize_filename(m.text or "Media")[:15]
+                            file_name = f"[{chat_tag}]_{clean_cap}_{m.id}{ext}"
                         else:
-                            current_item_task["file_name"] = f"video_{m.id}.mp4"
-                            current_item_task["file_size"] = 0
+                            file_name = sanitize_filename(raw_name)
+                        current_item_task["file_name"] = file_name
+                        current_item_task["task_id"] = f"{task_info.get('task_id', 'None')}_{m.id}"
+                        file_size = 0
+                        if m.file:
+                            # 如果是 Document (视频、文件)
+                            file_size = m.file.size
+                        elif m.photo:
+                            # 如果是 Photo (照片没有 .file.size，需要从最大的 photo size 里取)
+                            # Telethon 的 m.photo 自动指向最高质量
+                            file_size = m.photo.sizes[-1].size if hasattr(m.photo, 'sizes') else 0
+
+                        current_item_task["file_size"] = file_size
                         current_item_task["message"] = m
                         init.logger.info(f"current_item_task : {current_item_task}")
                         await video_manager.add_task(current_item_task)

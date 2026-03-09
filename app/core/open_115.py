@@ -283,11 +283,11 @@ class OpenAPI_115:
             
             if headers is None:
                 headers = self._get_headers()
-        init.logger.info(f"API请求: {method} {url} {params} {data}")
+        init.logger.info(f"API请求: {method} {url} {params} {data} {headers}")
         if method.upper() == 'GET':
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=(5, 30))
         elif method.upper() == 'POST':
-            response = requests.post(url, headers=headers, data=data)
+            response = requests.post(url, headers=headers, data=data, timeout=(5, 30))
         else:
             raise ValueError(f"不支持的HTTP方法: {method}")
         if response.status_code == 200:

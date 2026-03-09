@@ -78,8 +78,12 @@ async def download_worker(bot):
         last_update_time = 0  # 用于控制 10s 更新频率
 
         try:
-            # 1. 核心：Caption 补全逻辑 (恢复 caption_cache)
-            group_id = msg.grouped_id
+            # --- 修复 1: 解决 File Reference 过期 ---
+            # 下载前重新获取消息对象，刷新 File Reference
+            msg = await init.tg_user_client.get_messages(target_chat, ids=msg.id)
+            if not msg or not (msg.photo or msg.video or msg.document):
+                init.logger.warning(f"消息 {msg.id} 已失效或不再包含媒体")
+                continue
 
             # 2. 构造唯一的 Key (频道ID + 组ID)，防止不同频道串词
             cache_key = f"{target_chat}_{msg.grouped_id}" if msg.grouped_id else None

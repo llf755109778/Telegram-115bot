@@ -15,7 +15,7 @@ from app.core.open_115 import calculate_sha1
 # --- 存储和配置 ---
 CONFIG_FILE = "/config/sync_config.json"
 caption_cache = OrderedDict()
-MAX_CACHE_SIZE = 10000 # 1000 个消息组通常足够了
+MAX_CACHE_SIZE = 50000 # 1000 个消息组通常足够了
 download_queue = asyncio.Queue()
 
 
@@ -220,10 +220,22 @@ async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # reverse=True 表示从旧到新拉取，这样 grouped_id 的标题逻辑依然生效
         async for msg in init.tg_user_client.iter_messages(
                 target_chat,
-                min_id=last_id,
+                min_id=min(last_id, max(1, last_id - 20)),
                 reverse=True,  # 关键：从旧到新拉取，不需要再执行 .reverse()
                 limit=None  # 虽然是 None，但它是流式获取的
         ):
+            # 2. 构造唯一的 Key (频道ID + 组ID)，防止不同频道串词
+            cache_key = f"{target_chat}_{msg.grouped_id}" if msg.grouped_id else None
+
+            raw_cap = msg.text or ""
+            if cache_key:
+                if raw_cap:
+                    # 只有当当前消息有文字时，才更新缓存
+                    caption_cache[cache_key] = sanitize_filename(raw_cap)
+                    # 将最新的 Key 移到末尾（保持 LRU 顺序）
+                    caption_cache.move_to_end(cache_key)
+            if msg.id <= last_id:
+                continue
             if msg.photo or msg.video or msg.document:
                 await download_queue.put({
                     'msg': msg,

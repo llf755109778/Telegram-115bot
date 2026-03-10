@@ -8,7 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import init
+
+from app.core.open_115 import calculate_sha1
 from app.utils.fast_telethon import download_file_parallel
+
 
 class VideoDownloadManager:
     def __init__(self):
@@ -20,14 +23,9 @@ class VideoDownloadManager:
         self.max_concurrent_tasks = 2
         # 任务锁
         self.lock = asyncio.Lock()
-
+        self._is_running = False  # 状态标记
         # 核心：初始化时直接启动固定数量的 Worker 协程
         self.workers = []
-        for i in range(self.max_concurrent_tasks):
-            worker = asyncio.create_task(self._process_queue())
-            self.workers.append(worker)
-
-        init.logger.info(f"🚀 VideoDownloadManager 已启动，并发数: {self.max_concurrent_tasks}")
 
     def get_queue_status(self):
         """获取当前队列状态摘要"""
@@ -38,7 +36,17 @@ class VideoDownloadManager:
         waiting_count = self.queue.qsize()
 
         return active_list, waiting_count
+
     async def add_task(self, task_info):
+        async with self.lock:
+            """显式启动 Worker"""
+            if not self._is_running:
+                self._is_running = True
+                for i in range(self.max_concurrent_tasks):
+                    worker = asyncio.create_task(self._process_queue())
+                    self.workers.append(worker)
+                init.logger.info(f"🚀 VideoDownloadManager 已异步启动，并发数: {self.max_concurrent_tasks}")
+
         """添加下载任务"""
         await self.queue.put(task_info)
         init.logger.info(f"任务已添加到队列: {task_info['file_name']}")
@@ -96,25 +104,25 @@ class VideoDownloadManager:
             message_id = task_info['message_id']
 
             # 更新状态：开始下载
-            await self._update_status(context, chat_id, message_id, 
-                                    f"⬇️ 正在下载: {file_name}\n等待队列...", 
-                                    task_id, show_cancel=True)
+            await self._update_status(context, chat_id, message_id,
+                                      f"⬇️ 正在下载: {file_name}\n等待队列...",
+                                      task_id, show_cancel=True)
 
             # 进度回调
             last_update_time = datetime.now()
-            
+
             async def progress_callback(current, total):
                 nonlocal last_update_time
                 if cancel_event.is_set():
                     raise asyncio.CancelledError("用户取消下载")
-                
+
                 now = datetime.now()
                 if (now - last_update_time).total_seconds() >= 4 * video_manager.max_concurrent_tasks + 4:
                     percentage = (current / total) * 100 if total > 0 else 0
                     progress_bar = self._create_progress_bar(percentage)
                     text = (f"⬇️ 正在下载: {file_name}\n"
-                           f"📊 进度: {progress_bar}\n"
-                           f"📦 大小: {self._format_size(current)} / {self._format_size(total)}")
+                            f"📊 进度: {progress_bar}\n"
+                            f"📦 大小: {self._format_size(current)} / {self._format_size(total)}")
                     await self._update_status(context, chat_id, message_id, text, task_id, show_cancel=True)
                     last_update_time = now
 
@@ -137,15 +145,16 @@ class VideoDownloadManager:
             # 格式转换与重命名
             if cancel_event.is_set():
                 raise asyncio.CancelledError("用户取消下载")
-                
+
             await self._update_status(context, chat_id, message_id, "🔄 正在处理文件...", task_id)
             final_path = self._process_file(saved_path)
-            
+
             # 上传到115
             if cancel_event.is_set():
                 raise asyncio.CancelledError("用户取消下载")
 
-            await self._update_status(context, chat_id, message_id, f"☁️ 正在上传到115: {Path(final_path).name}", task_id)
+            await self._update_status(context, chat_id, message_id, f"☁️ 正在上传到115: {Path(final_path).name}",
+                                      task_id)
             await self._upload_to_115(final_path, save_path, context, chat_id, message_id, task_id)
             # init.logger.info(f"_run_task 上传完成 {task_id}————{file_name}")
 
@@ -157,7 +166,6 @@ class VideoDownloadManager:
             init.logger.error(f"任务失败 {task_id}: {e}")
             await self._update_status(context, chat_id, message_id, f"❌ 失败: {str(e)}", task_id, show_cancel=False)
             self._cleanup(temp_file_path)
-
 
     @staticmethod
     def is_date_directory(save_dir):
@@ -194,18 +202,19 @@ class VideoDownloadManager:
             loop = asyncio.get_running_loop()
 
             def sync_task():
-                sha1 = self._calculate_sha1(file_path)  # 假设这是同步计算
+                sha1 = calculate_sha1(file_path)  # 假设这是同步计算
                 init.openapi_115.create_dir_recursive(save_dir)  # 假设这是同步请求
 
                 # 确保目录存在
                 init.openapi_115.create_dir_recursive(save_dir)
                 return sha1
+
             sha1 = await loop.run_in_executor(None, sync_task)
 
             # 上传
             is_upload, bingo = await loop.run_in_executor(
                 None,
-                    lambda: init.openapi_115.upload_file(
+                lambda: init.openapi_115.upload_file(
                     target=save_dir,
                     file_name=file_name,
                     file_size=file_size,
@@ -217,8 +226,8 @@ class VideoDownloadManager:
             if is_upload:
                 status = "⚡ 秒传成功" if bingo else "✅ 上传成功"
                 text = (f"{status}\n"
-                       f"📄 文件: {file_name}\n"
-                       f"📂 目录: {save_dir}")
+                        f"📄 文件: {file_name}\n"
+                        f"📂 目录: {save_dir}")
                 await self._update_status(context, chat_id, message_id, text, task_id, show_cancel=False)
             else:
                 await self._update_status(context, chat_id, message_id, "❌ 上传失败", task_id, show_cancel=False)
@@ -251,7 +260,7 @@ class VideoDownloadManager:
                 # 使用 v_cancel_ 前缀避免与其他处理器的 cancel_ 冲突
                 keyboard = [[InlineKeyboardButton("❌ 取消下载", callback_data=f"v_cancel_{task_id}")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -267,15 +276,11 @@ class VideoDownloadManager:
         names = ["B", "KB", "MB", "GB", "TB"]
         i = int(math.floor(math.log(size, 1024)))
         p = math.pow(1024, i)
-        return f"{round(size/p, 2)} {names[i]}"
+        return f"{round(size / p, 2)} {names[i]}"
 
     def _create_progress_bar(self, percentage):
         filled = int(percentage // 5)
         return "█" * filled + "░" * (20 - filled) + f" {percentage:.1f}%"
-
-    def _calculate_sha1(self, file_path):
-        with open(file_path, 'rb') as f:
-            return hashlib.sha1(f.read()).hexdigest()
 
     def _detect_video_format(self, file_path):
         # 复用原有的格式检测逻辑
@@ -284,15 +289,15 @@ class VideoDownloadManager:
                 header = f.read(260)
         except:
             return "mp4"
-            
+
         if len(header) < 4: return "mp4"
-        
+
         if len(header) >= 12 and header[4:8] == b'ftyp':
             major = header[8:12]
             if major == b'qt  ': return 'mov'
             if major.startswith(b'3g'): return '3gp'
             return 'mp4'
-            
+
         if header.startswith(b'\x1A\x45\xDF\xA3'):
             return 'mkv'
         if header.startswith(b'RIFF') and header[8:12] == b'AVI ':
@@ -301,8 +306,9 @@ class VideoDownloadManager:
             return 'wmv'
         if header.startswith(b'FLV'):
             return 'flv'
-            
+
         return "mp4"
+
 
 # 全局单例
 video_manager = VideoDownloadManager()

@@ -230,19 +230,34 @@ async def process_upload(file_path, save_dir):
     return await loop.run_in_executor(None, sync_task)
 
 
-# --- 指令入口 ---
 async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ 用法: `/chatDown 频道链接`")
         return
 
     target_chat = context.args[0]
-    # 先给用户一个初步反馈
-    msg_status = await update.message.reply_text("🔍 正在启动流式扫描...")
+    # 1. 先发一条初始消息，拿到 msg_id
+    msg_status = await update.message.reply_text("🔍 正在初始化流式扫描...")
 
-    last_id = load_progress()
+    # 2. 【核心】启动一个后台协程去干重活，但不 await 它
+    # 把所有需要的参数传进去
+    asyncio.create_task(
+        run_scan_and_update_status(
+            target_chat,
+            msg_status,
+            update.effective_chat.id
+        )
+    )
+
+    # 3. 主函数直接结束，机器人立刻恢复响应能力
+    init.logger.info(f"已为频道 {target_chat} 开启后台扫描追踪")
+
+
+async def run_scan_and_update_status(target_chat, msg_status, chat_id):
+    """这个函数负责苦力活：扫描 + 更新进度"""
     count = 0
-    batch_size = 100  # 每批处理多少条，防止刷屏和封号
+    scanned_total = 0
+    last_id = load_progress()  # 建议改为异步加载
 
     try:
         if not init.tg_user_client.is_connected():
@@ -256,6 +271,7 @@ async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reverse=True,  # 关键：从旧到新拉取，不需要再执行 .reverse()
                 limit=None  # 虽然是 None，但它是流式获取的
         ):
+            scanned_total += 1
             # 2. 构造唯一的 Key (频道ID + 组ID)，防止不同频道串词
             cache_key = f"{target_chat}_{msg.grouped_id}" if msg.grouped_id else None
 
@@ -272,27 +288,32 @@ async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await download_queue.put({
                     'msg': msg,
                     'target_chat': target_chat,
-                    'chat_id': update.effective_chat.id
+                    'chat_id': chat_id
                 })
                 count += 1
 
-            # 每发现 100 个媒体，更新一次进度，让用户知道机器人在动
-            if count > 0 and count % batch_size == 0:
-                try:
-                    await msg_status.edit_text(f"🚀 已扫描并入队 `{count}` 个媒体...")
-                except:
-                    pass
-                # 稍微歇息一下，防止 Telegram 频繁请求限制
-                await asyncio.sleep(0.5)
+            # 每扫描 100 条消息（无论是不是媒体），让出一次控制权，防止卡死
+            if scanned_total % 100 == 0:
+                await asyncio.sleep(0.01)
 
-        if count > 0:
-            await msg_status.edit_text(f"✅ 扫描任务完成！\n已将 `{count}` 个新任务排入流水线。")
-        else:
-            await msg_status.edit_text(f"☕ 已经是最新进度，没有发现新媒体。")
+            # 每发现 50 个媒体，更新一次进度条，让用户爽到
+            if count > 0 and count % 100 == 0:
+                try:
+                    # 此时 chatDown 早已结束，但这个任务依然持有 msg_status 对象
+                    await msg_status.edit_text(
+                        f"🚀 正在后台扫描...\n"
+                        f"📂 已入队: `{count}` 个媒体\n"
+                        f"📡 已扫描: `{scanned_total}` 条消息"
+                    )
+                except Exception:
+                    pass  # 防止 Telegram 限制编辑频率导致的报错
+                await asyncio.sleep(1.5)
+        # 扫描结束
+        await msg_status.edit_text(f"✅ 扫描完成！共计入队 `{count}` 个任务。")
 
     except Exception as e:
-        init.logger.error(f"扫描异常: {e}")
-        await update.message.reply_text(f"❌ 扫描过程中断: {e}")
+        init.logger.error(f"扫描中断: {e}")
+        await msg_status.edit_text(f"❌ 扫描异常中断: {e}")
 
 
 def register_chatDown_handlers(application):

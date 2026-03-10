@@ -163,6 +163,7 @@ async def download_worker(bot):
                     )
                     await status_msg.edit_text(final_text, parse_mode="Markdown")
                     init.logger.info(f"✅ 完成: {file_name}")
+                    break
                 else:
                     init.logger.error(f"❌ 上传失败: {result}，准备倒计时重试")
                     await status_msg.edit_text(f"❌ **上传失败**\n 31分钟以后重试"
@@ -220,6 +221,7 @@ async def process_upload(file_path, save_dir):
                 file_size=os.path.getsize(file_path), fileid=sha1,
                 file_path=file_path, request_times=1
             )
+            init.logger.info(f"📤 上传结果: {is_upload}, {bingo}")
             return is_upload, bingo
         except Exception as e:
             return False, False

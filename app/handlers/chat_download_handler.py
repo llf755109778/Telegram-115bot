@@ -15,7 +15,7 @@ from app.core.open_115 import calculate_sha1
 # --- 存储和配置 ---
 CONFIG_FILE = "/config/sync_config.json"
 caption_cache = OrderedDict()
-MAX_CACHE_SIZE = 50000 # 1000 个消息组通常足够了
+MAX_CACHE_SIZE = 50000  # 1000 个消息组通常足够了
 download_queue = asyncio.Queue()
 
 
@@ -39,6 +39,7 @@ def sanitize_filename(name):
     # 过滤网盘和系统敏感字符
     name = re.sub(r'[\\/:*?"<>|#%&{}]', '', name)
     return name.replace('\n', ' ').strip()[:80]
+
 
 def get_ext(msg):
     ext = None
@@ -167,8 +168,8 @@ async def download_worker(bot):
                 else:
                     init.logger.error(f"❌ 上传失败: {result}，准备倒计时重试")
                     await status_msg.edit_text(f"❌ **上传失败**\n 31分钟以后重试"
-                        f"📁 目录: `{remote_target}`\n"
-                        f"📝 文件: `{file_name}`\n")
+                                               f"📁 目录: `{remote_target}`\n"
+                                               f"📝 文件: `{file_name}`\n")
 
                     # 倒计时 31 分钟 (31 * 60 = 1860 秒)
                     retry_seconds = 31 * 60

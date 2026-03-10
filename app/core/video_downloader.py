@@ -18,10 +18,16 @@ class VideoDownloadManager:
         self.active_tasks = {}
         # 最大并发数
         self.max_concurrent_tasks = 2
-        # 当前并发数
-        self.current_tasks = 0
         # 任务锁
         self.lock = asyncio.Lock()
+
+        # 核心：初始化时直接启动固定数量的 Worker 协程
+        self.workers = []
+        for i in range(self.max_concurrent_tasks):
+            worker = asyncio.create_task(self._process_queue())
+            self.workers.append(worker)
+
+        init.logger.info(f"🚀 VideoDownloadManager 已启动，并发数: {self.max_concurrent_tasks}")
 
     def get_queue_status(self):
         """获取当前队列状态摘要"""
@@ -36,60 +42,59 @@ class VideoDownloadManager:
         """添加下载任务"""
         await self.queue.put(task_info)
         init.logger.info(f"任务已添加到队列: {task_info['file_name']}")
-        # 尝试启动任务处理循环（如果尚未启动）
-        asyncio.create_task(self._process_queue())
 
     async def cancel_task(self, task_id):
         """取消任务"""
         async with self.lock:
-            if task_id in self.active_tasks:
-                task = self.active_tasks[task_id]
+            # 必须在锁内检查，防止 Worker 刚好把它删掉
+            task = self.active_tasks.get(task_id)
+            if task and 'cancel_event' in task:
                 task['cancel_event'].set()
                 init.logger.info(f"正在取消任务: {task_id}")
                 return True
+        init.logger.warning(f"❌ 取消失败：任务 {task_id} 可能已完成或不存在")
         return False
 
     async def _process_queue(self):
-        """处理队列中的任务"""
+        """持久运行的任务消费者"""
         while True:
-            async with self.lock:
-                # init.logger.info(f"_process_queue 正在运行的任务：{self.current_tasks}")
-                if self.current_tasks >= self.max_concurrent_tasks:
-                    # 达到最大并发数，等待
-                    break
-                
-                if self.queue.empty():
-                    # 队列为空，退出循环
-                    break
-                
-                # 获取下一个任务
-                task_info = await self.queue.get()
-                self.current_tasks += 1
-                # init.logger.info(f"_process_queue  self.current_tasks += 1 正在运行的任务：{self.current_tasks}")
-                self.active_tasks[task_info['task_id']] = task_info
-                
-            # 启动任务
-            # init.logger.info(f"_process_queue**********asyncio.create_task(self._run_task(task_info))")
-            asyncio.create_task(self._run_task(task_info))
+            # 1. 无限期等待队列中的下一个任务
+            task_info = await self.queue.get()
+
+            task_id = task_info['task_id']
+            try:
+                # 2. 标记任务为活跃状态
+                async with self.lock:
+                    self.active_tasks[task_id] = task_info
+
+                # 3. 执行真正的下载逻辑
+                init.logger.info(f"Worker-开始处理: {task_info['file_name']}")
+                await self._run_task(task_info)
+
+            except Exception as e:
+                init.logger.error(f"Worker-任务崩溃: {e}")
+            finally:
+                # 4. 无论成功失败，清理状态并告知队列任务完成
+                async with self.lock:
+                    if task_id in self.active_tasks:
+                        del self.active_tasks[task_id]
+                self.queue.task_done()
 
     async def _run_task(self, task_info):
         """执行单个下载任务"""
         task_id = task_info['task_id']
         file_name = task_info['file_name']
-        # init.logger.info(f"_run_task 下载 {task_id}————{file_name}")
+        temp_file_path = f"{init.TEMP}/{file_name}"
+        cancel_event = asyncio.Event()
+        task_info['cancel_event'] = cancel_event
 
         try:
-
-            file_size = task_info['file_size']
             save_path = task_info['save_path']
             message = task_info['message']
             context = task_info['context']
             chat_id = task_info['chat_id']
             message_id = task_info['message_id']
 
-            temp_file_path = f"{init.TEMP}/{file_name}"
-            cancel_event = asyncio.Event()
-            task_info['cancel_event'] = cancel_event
             # 更新状态：开始下载
             await self._update_status(context, chat_id, message_id, 
                                     f"⬇️ 正在下载: {file_name}\n等待队列...", 
@@ -152,16 +157,7 @@ class VideoDownloadManager:
             init.logger.error(f"任务失败 {task_id}: {e}")
             await self._update_status(context, chat_id, message_id, f"❌ 失败: {str(e)}", task_id, show_cancel=False)
             self._cleanup(temp_file_path)
-        finally:
-            async with self.lock:
-                # init.logger.info(f"_run_task current_tasks {self.current_tasks}")
-                self.current_tasks -= 1
-                # init.logger.info(f"_run_task current_tasks--- {self.current_tasks}")
 
-                if task_id in self.active_tasks:
-                    del self.active_tasks[task_id]
-            # 继续处理队列
-            asyncio.create_task(self._process_queue())
 
     @staticmethod
     def is_date_directory(save_dir):

@@ -144,24 +144,53 @@ async def download_worker(bot):
 
             date_folder = msg.date.strftime("%Y-%m")
             remote_target = f"/AV/Telegram_Sync/{chat_tag}/{date_folder}"
+            # 假设这部分代码在一个 async def 处理函数中
+            max_retries = 3  # 可选：设置最大重试次数，如果想无限循环可以去掉
+            retry_count = 0
+            while retry_count <= max_retries:
+                success, result = await process_upload(local_path, remote_target)
 
-            success, result = await process_upload(local_path, remote_target)
+                # 6. 结果结算
+                total_duration = round(time.time() - start_time, 1)
+                if success:
+                    if os.path.exists(local_path): os.remove(local_path)
+                    save_progress(msg.id)
+                    final_text = (
+                        f"✨ **同步成功！**\n\n"
+                        f"📁 目录: `{remote_target}`\n"
+                        f"📝 文件: `{file_name}`\n"
+                        f"⏱️ 总耗时: `{total_duration}s`"
+                    )
+                    await status_msg.edit_text(final_text, parse_mode="Markdown")
+                    init.logger.info(f"✅ 完成: {file_name}")
+                else:
+                    init.logger.error(f"❌ 上传失败: {result}，准备倒计时重试")
+                    await status_msg.edit_text(f"❌ **上传失败**\n 31分钟以后重试"
+                        f"📁 目录: `{remote_target}`\n"
+                        f"📝 文件: `{file_name}`\n")
 
-            # 6. 结果结算
-            total_duration = round(time.time() - start_time, 1)
-            if success:
-                if os.path.exists(local_path): os.remove(local_path)
-                save_progress(msg.id)
-                final_text = (
-                    f"✨ **同步成功！**\n\n"
-                    f"📁 目录: `{remote_target}`\n"
-                    f"📝 文件: `{file_name}`\n"
-                    f"⏱️ 总耗时: `{total_duration}s`"
-                )
-                await status_msg.edit_text(final_text, parse_mode="Markdown")
-                init.logger.info(f"✅ 完成: {file_name}")
-            else:
-                await status_msg.edit_text(f"❌ **上传失败**\n错误: {result}")
+                    # 倒计时 31 分钟 (31 * 60 = 1860 秒)
+                    retry_seconds = 31 * 60
+
+                    # 动态倒计时显示
+                    for i in range(retry_seconds, 0, -30):  # 每分钟更新一次状态，节省 API 请求
+                        minutes_left = i // 60
+                        retry_msg = (
+                            f"❌ **上传失败**\n"
+                            f"📁 目录: `{remote_target}`\n"
+                            f"📝 文件: `{file_name}`\n"
+                            f"⏳ 将在 **{minutes_left}** 分钟后自动重试..."
+                        )
+                        try:
+                            await status_msg.edit_text(retry_msg, parse_mode="Markdown")
+                        except Exception:
+                            pass  # 防止编辑消息太快被 Telegram 限制
+
+                        await asyncio.sleep(60)  # 等待一分钟
+                # 倒计时结束，重置开始时间并重新进入 while 循环
+                start_time = time.time()
+                retry_count += 1
+                init.logger.info(f"🔄 开始第 {retry_count} 次重试...")
 
         except Exception as e:
             init.logger.error(f"❌ Worker 报错: {str(e)}")
@@ -186,14 +215,14 @@ async def process_upload(file_path, save_dir):
             file_name = Path(file_path).name
             sha1 = calculate_sha1(file_path)
             init.openapi_115.create_dir_recursive(save_dir)
-            res = init.openapi_115.upload_file(
+            is_upload, bingo = init.openapi_115.upload_file(
                 target=save_dir, file_name=file_name,
                 file_size=os.path.getsize(file_path), fileid=sha1,
                 file_path=file_path, request_times=1
             )
-            return True, res
+            return is_upload, bingo
         except Exception as e:
-            return False, str(e)
+            return False, False
 
     return await loop.run_in_executor(None, sync_task)
 

@@ -75,11 +75,14 @@ async def get_dc_client(main_client: TelegramClient, document):
         client = _dc_clients.get(target_dc)
         if client:
             try:
-                if not await client.is_connected():
-                    await client.disconnect()
-                    client = None
-                await client.get_me()
-            except Exception:
+                # 快速检查，不使用 get_me()
+                if client.is_connected():
+                    return client
+                await client.connect()
+                return client
+            except:
+                _dc_clients.pop(target_dc, None)
+                logger.error(f"正在销毁失效 DC {target_dc} ")
                 client = None
 
         if client:
@@ -91,22 +94,28 @@ async def get_dc_client(main_client: TelegramClient, document):
         logger.info(f"🚀 正在为 DC {target_dc} 创建新的分身...")
 
         # 创建新客户端（临时 session）
-        temp_session_name = f"{main_client.session.filename}_dc{target_dc}"
         new_client = TelegramClient(StringSession(), main_client.api_id, main_client.api_hash)
 
         # 强制重定向到目标 DC
         new_client.session.set_dc(target_dc, GLOBAL_DC_MAP[target_dc], 443)
-        await new_client.connect()
+        try:
+            # 增加超时控制，防止死等
+            await asyncio.wait_for(new_client.connect(), timeout=15)
 
-        export_auth = await main_client(functions.auth.ExportAuthorizationRequest(target_dc))
-        # 导入授权
-        await new_client(ImportAuthorizationRequest(
-            id=export_auth.id,
-            bytes=export_auth.bytes
-        ))
+            # 关键：导出授权
+            export_auth = await main_client(functions.auth.ExportAuthorizationRequest(target_dc))
+            await new_client(ImportAuthorizationRequest(id=export_auth.id, bytes=export_auth.bytes))
 
-        _dc_clients[target_dc] = new_client
-        return new_client
+            # 3. 只有成功了才存入缓存
+            _dc_clients[target_dc] = new_client
+            logger.info(f"✨ DC {target_dc} 分身建立成功并已加入缓存")
+            return new_client
+        except Exception as e:
+            logger.error(f"❌ 建立 DC {target_dc} 分身失败: {e}")
+            # 失败了也要断开，防止资源泄漏
+            await new_client.disconnect()
+            raise e
+
 
 # --------------------------
 # 异步分片下载
@@ -131,7 +140,8 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
         client = main_client
         if hasattr(document, 'dc_id') and document.dc_id != main_client.session.dc_id:
             client = await get_dc_client(main_client, document)
-            logger.info(f"document dc_id={document.dc_id} client dc_id={client.session.dc_id}")
+            logger.info(f"分身创建成功")
+        logger.info(f"document dc_id={document.dc_id} client dc_id={client.session.dc_id}")
         file_size = document.size
 
         # 对于小文件直接用默认下载

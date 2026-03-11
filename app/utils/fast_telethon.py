@@ -1,56 +1,158 @@
 import asyncio
 import os
 import logging
-from telethon import TelegramClient, utils, functions, errors
+from telethon import TelegramClient, errors, functions
 from telethon.sessions import StringSession
+from telethon.tl.functions.help import GetConfigRequest
 from telethon.tl.functions.upload import GetFileRequest
-from telethon.tl.types import InputFileLocation, InputDocumentFileLocation, upload
+from telethon.tl.types import InputDocumentFileLocation
+from telethon.tl.functions.auth import ImportAuthorizationRequest
 
 logger = logging.getLogger(__name__)
 
+# --------------------------
+# DC 客户端缓存
+# --------------------------
+_dc_clients = {}  # dc_id -> TelegramClient
+_dc_lock = asyncio.Lock()
 
-async def download_file_parallel(client: TelegramClient, message, file_path, progress_callback=None, threads=4,
+
+async def get_best_dc_nodes(client):
+    # 1. 获取配置
+    config = await client(functions.help.GetConfigRequest())
+
+    # 2. 定义存放结果的字典 (用 dc_id 做 key 自动去重)
+    best_nodes = {}
+
+    # 3. 遍历所有选项进行筛选
+    for option in config.dc_options:
+        # 过滤掉 CDN 节点（我们只需要核心 DC）
+        if option.cdn:
+            continue
+
+        # 优先级逻辑：
+        # 如果这个 DC 还没记录，或者当前这个是 IPv4 且之前记录的是 IPv6，则替换
+        if option.id not in best_nodes:
+            best_nodes[option.id] = option
+        else:
+            # 偏好非隐藏节点（this_port_only 为 False）且 端口为 443 的 IPv4
+            current_best = best_nodes[option.id]
+            if not option.ipv6 and current_best.ipv6:
+                best_nodes[option.id] = option
+            elif option.port == 443 and current_best.port != 443:
+                best_nodes[option.id] = option
+
+    # 4. 排序并取前五个 (DC 1, 2, 3, 4, 5)
+    sorted_dcs = sorted(best_nodes.values(), key=lambda x: x.id)
+
+    # 5. 格式化输出
+    result = {}
+    for dc in sorted_dcs[:5]:
+        result[dc.id] = dc.ip_address
+        print(f"✅ DC {dc.id}: {dc.ip_address}:{dc.port} (区域: {dc.static or 'Default'})")
+
+    return result
+
+
+# 全局变量
+GLOBAL_DC_MAP = {}
+
+
+async def init_dc_map(main_client):
+    global GLOBAL_DC_MAP
+    if not GLOBAL_DC_MAP:
+        logger.info("正在获取 Telegram 官方 DC 节点列表...")
+        GLOBAL_DC_MAP = await get_best_dc_nodes(main_client)
+
+
+async def get_dc_client(main_client: TelegramClient, document):
+    """
+    为目标 DC 获取独立客户端
+    """
+    global GLOBAL_DC_MAP
+    target_dc = document.dc_id
+    async with _dc_lock:
+        client = _dc_clients.get(target_dc)
+        if client:
+            try:
+                if not await client.is_connected():
+                    await client.disconnect()
+                    client = None
+                await client.get_me()
+            except Exception:
+                client = None
+
+        if client:
+            return client
+
+        if not GLOBAL_DC_MAP:
+            GLOBAL_DC_MAP = await get_best_dc_nodes(main_client)
+
+        logger.info(f"🚀 正在为 DC {target_dc} 创建新的分身...")
+
+        # 创建新客户端（临时 session）
+        temp_session_name = f"{main_client.session.filename}_dc{target_dc}"
+        new_client = TelegramClient(StringSession(), main_client.api_id, main_client.api_hash)
+
+        # 强制重定向到目标 DC
+        new_client.session.set_dc(target_dc, GLOBAL_DC_MAP[target_dc], 443)
+        await new_client.connect()
+
+        export_auth = await main_client(functions.auth.ExportAuthorizationRequest(target_dc))
+        # 导入授权
+        await new_client(ImportAuthorizationRequest(
+            id=export_auth.id,
+            bytes=export_auth.bytes
+        ))
+
+        _dc_clients[target_dc] = new_client
+        return new_client
+
+# --------------------------
+# 异步分片下载
+# --------------------------
+async def download_file_parallel(main_client: TelegramClient, message, file_path,
+                                 progress_callback=None, threads=4,
                                  cancel_event=None):
     """
-    使用多线程分片下载 Telegram 文件
+    多 DC + 异步分片下载文件
     """
     try:
-        message = await client.get_messages(message.peer_id, ids=message.id)
-        media = message.media
+        # 获取最新消息
+        message = await main_client.get_messages(message.peer_id, ids=message.id)
+        media = getattr(message, 'media', None)
         document = getattr(media, 'document', None)
 
-        # 如果不是文档类型，或者文件太小（小于10MB），使用默认下载
-        if not document or document.size < 10 * 1024 * 1024:
-            # 默认下载不支持 cancel_event，这里简单处理
-            return await client.download_media(message, file=file_path, progress_callback=progress_callback)
+        if not document:
+            # 普通小文件直接下载
+            return await main_client.download_media(message, file=file_path, progress_callback=progress_callback)
 
+        # 判断是否跨 DC
+        client = main_client
+        if hasattr(document, 'dc_id') and document.dc_id != main_client.session.dc_id:
+            client = await get_dc_client(main_client, document)
+            logger.info(f"document dc_id={document.dc_id} client dc_id={client.session.dc_id}")
         file_size = document.size
 
-        # 获取 input_location，明确传入 document
-        # input_location = utils.get_input_location(document)
-        from telethon.tl.types import InputDocumentFileLocation
+        # 对于小文件直接用默认下载
+        if file_size < 10 * 1024 * 1024:
+            return await client.download_media(message, file=file_path, progress_callback=progress_callback)
 
+        # 构造 InputDocumentFileLocation
         input_location = InputDocumentFileLocation(
             id=document.id,
             access_hash=document.access_hash,
             file_reference=document.file_reference,
             thumb_size=''  # 下载原文件必须传空字符串
         )
-        # 确保 input_location 是有效的 TLObject
-        if not input_location:
-            logger.warning("无法获取有效的 input_location，回退到单线程下载")
-            return await client.download_media(message, file=file_path, progress_callback=progress_callback)
 
-        # 分片大小 512KB
-        part_size = 1024 * 1024
-
-        # 确保目录存在
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         # 初始化文件（预分配空间）
         with open(file_path, 'wb') as f:
             f.truncate(file_size)
 
+        part_size = 1024 * 1024  # 1MB
         downloaded = 0
         progress_lock = asyncio.Lock()
         sem = asyncio.Semaphore(threads)
@@ -85,16 +187,13 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
                             offset=offset,
                             limit=current_part_size
                         ))
-                        if isinstance(result, upload.File):
-                            chunk_data = result.bytes
-                        elif isinstance(result, upload.FileCdnRedirect):
-                            logger.warning(f"检测到 CDN 重定向，并行下载不支持 CDN，触发回退...")
+
+                        if not hasattr(result, 'bytes'):
+                            logger.warning(f"收到非预期 TL 对象: {type(result)}, 回退单线程")
                             failed = True
                             return
-                        else:
-                            # 这就是报错 "expected but found something else" 的根源
-                            raise TypeError(f"收到非预期 TL 对象: {type(result)}")
 
+                        chunk_data = result.bytes
                         with open(file_path, 'r+b') as f:
                             f.seek(offset)
                             f.write(chunk_data[:file_size - offset])
@@ -108,15 +207,14 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
                         return
                 except Exception as e:
                     retries -= 1
+                    await asyncio.sleep(1)
                     if retries == 0:
                         logger.error(f"分片下载失败 offset={offset}: {e}")
                         failed = True
                         raise e
-                    await asyncio.sleep(1)
 
-        tasks = []
-        for offset in range(0, file_size, part_size):
-            tasks.append(asyncio.create_task(download_chunk(offset)))
+        # 创建所有分片任务
+        tasks = [asyncio.create_task(download_chunk(offset)) for offset in range(0, file_size, part_size)]
 
         # 使用 asyncio.wait 监控任务和取消事件
         if cancel_event:
@@ -155,22 +253,6 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
 
         return file_path
 
-    except asyncio.CancelledError:
-        logger.info("下载已取消")
-        # 确保清理文件
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except:
-                pass
-        raise
-
     except Exception as e:
-        if cancel_event and cancel_event.is_set():
-            raise asyncio.CancelledError("用户取消下载")
-
-        logger.error(f"多线程下载遇到错误: {e}，正在回退到单线程下载...")
-        # 如果多线程下载失败，回退到原生下载
-        # 确保文件被重置或覆盖
-        message = await client.get_messages(message.peer_id, ids=message.id)
-        return await client.download_media(message, file=file_path, progress_callback=progress_callback)
+        logger.error(f"下载遇到错误: {e}，回退单线程下载...")
+        return await main_client.download_media(message, file=file_path, progress_callback=progress_callback)

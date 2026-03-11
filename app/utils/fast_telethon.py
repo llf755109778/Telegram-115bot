@@ -126,6 +126,8 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
                     logger.info("⚡ 检测到文件在 DC1，正在通过专线分身下载...")
                     client = dc_proxy
             logger.info(f"文件在 DC {document.dc_id}，当前在 DC {client.session.dc_id}，回退到单线程下载")
+            await asyncio.sleep(1)
+            message = await client.get_messages(message.peer_id, ids=message.id)
             return await client.download_media(message, file=file_path, progress_callback=progress_callback)
 
         # 获取 input_location，明确传入 document

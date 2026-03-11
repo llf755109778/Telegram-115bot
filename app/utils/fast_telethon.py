@@ -4,7 +4,7 @@ import logging
 from telethon import TelegramClient, utils, functions
 from telethon.sessions import StringSession
 from telethon.tl.functions.upload import GetFileRequest
-from telethon.tl.types import InputFileLocation, InputDocumentFileLocation
+from telethon.tl.types import InputFileLocation, InputDocumentFileLocation, upload
 
 logger = logging.getLogger(__name__)
 
@@ -125,21 +125,28 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
                 if dc_proxy:
                     logger.info("⚡ 检测到文件在 DC1，正在通过专线分身下载...")
                     client = dc_proxy
+                    message = await client.get_messages(message.peer_id, ids=message.id)
+                    await asyncio.sleep(1)
             logger.info(f"文件在 DC {document.dc_id}，当前在 DC {client.session.dc_id}，回退到单线程下载")
-            await asyncio.sleep(1)
-            message = await client.get_messages(message.peer_id, ids=message.id)
             return await client.download_media(message, file=file_path, progress_callback=progress_callback)
 
         # 获取 input_location，明确传入 document
-        input_location = utils.get_input_location(document)
+        # input_location = utils.get_input_location(document)
+        from telethon.tl.types import InputDocumentFileLocation
 
+        input_location = InputDocumentFileLocation(
+            id=document.id,
+            access_hash=document.access_hash,
+            file_reference=document.file_reference,
+            thumb_size=''  # 下载原文件必须传空字符串
+        )
         # 确保 input_location 是有效的 TLObject
         if not input_location:
             logger.warning("无法获取有效的 input_location，回退到单线程下载")
             return await client.download_media(message, file=file_path, progress_callback=progress_callback)
 
         # 分片大小 512KB
-        part_size = 1024 * 1024
+        part_size = 1024 * 512
 
         # 确保目录存在
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -157,7 +164,8 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
 
         async def download_chunk(offset):
             nonlocal downloaded, failed
-            if failed: return
+            if failed:
+                return
 
             # 检查取消信号
             if cancel_event and cancel_event.is_set():
@@ -173,16 +181,23 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
                 try:
                     async with sem:
                         current_part_size = part_size
-                        if offset + current_part_size > file_size:
-                            current_part_size = file_size - offset
+                        # if offset + current_part_size > file_size:
+                        #     current_part_size = file_size - offset
 
                         result = await client(GetFileRequest(
                             location=input_location,
                             offset=offset,
                             limit=current_part_size
                         ))
-
-                        chunk_data = result.bytes
+                        if isinstance(result, upload.File):
+                            chunk_data = result.bytes
+                        elif isinstance(result, upload.FileCdnRedirect):
+                            logger.warning(f"检测到 CDN 重定向，并行下载不支持 CDN，触发回退...")
+                            failed = True
+                            return
+                        else:
+                            # 这就是报错 "expected but found something else" 的根源
+                            raise TypeError(f"收到非预期 TL 对象: {type(result)}")
 
                         with open(file_path, 'r+b') as f:
                             f.seek(offset)

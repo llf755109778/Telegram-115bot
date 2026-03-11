@@ -128,7 +128,7 @@ async def download_worker(bot):
             date_folder = msg.date.strftime("%Y-%m")
             remote_target = f"/AV/Telegram_Sync/{chat_tag}/{date_folder}"
             # 假设这部分代码在一个 async def 处理函数中
-            max_retries = 3  # 可选：设置最大重试次数，如果想无限循环可以去掉
+            max_retries = 45  # 可选：设置最大重试次数，如果想无限循环可以去掉
             retry_count = 0
             while retry_count <= max_retries:
                 success, result = await process_upload(local_path, remote_target)
@@ -154,7 +154,7 @@ async def download_worker(bot):
                                                f"📝 文件: `{file_name}`\n")
 
                     # 倒计时 31 分钟 (31 * 60 = 1860 秒)
-                    retry_seconds = 31 * 60
+                    retry_seconds = 3 * 60
 
                     # 动态倒计时显示
                     for i in range(retry_seconds, 0, -60):  # 每分钟更新一次状态，节省 API 请求

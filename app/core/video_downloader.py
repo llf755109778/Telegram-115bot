@@ -132,7 +132,7 @@ class VideoDownloadManager:
                 message,
                 file_path=temp_file_path,
                 progress_callback=progress_callback,
-                threads=8,
+                threads=4,
                 cancel_event=cancel_event
             )
             # init.logger.info(f"_run_task 下载完成 {task_id}————{file_name}")

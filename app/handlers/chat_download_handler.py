@@ -21,19 +21,57 @@ MAX_CACHE_SIZE = 50000  # 1000 个消息组通常足够了
 download_queue = asyncio.Queue()
 
 
-def load_progress():
+def load_config():
+    """加载完整配置文件"""
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, 'r') as f:
-                return json.load(f).get("last_id", 0)
-        except:
-            return 0
-    return 0
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {"channels": {}}
+    return {"channels": {}}
 
 
-def save_progress(last_id):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump({"last_id": last_id}, f)
+config = load_config()
+
+
+def update_channel_data(channel_id, last_id=None, new_range=None):
+    # 1. 先加载完整的配置
+    global config
+
+    # 2. 确保 "channels" 节点存在
+    if "channels" not in config:
+        config["channels"] = {}
+
+    # 3. 获取或初始化该频道的数据
+    chid_str = str(channel_id)
+    if chid_str not in config["channels"]:
+        config["channels"][chid_str] = {"last_id": 0, "ranges": [], "name": ""}
+
+    # 4. 根据传入参数修改具体字段
+    if last_id is not None:
+        config["channels"][chid_str]["last_id"] = last_id
+
+    if new_range is not None:
+        # 假设 new_range 是一个列表 [start, end]
+        config["channels"][chid_str]["ranges"].append(new_range)
+
+    # 5. 保存回文件
+    save_progress(config)
+
+
+def save_progress(config):
+    """保存配置文件"""
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+
+
+def get_channel_progress(channel_id):
+    """获取特定频道的进度"""
+    global config
+    channel_data = config.get("channels", {}).get(str(channel_id), {})
+    # 返回上一次同步的 ID 和 自定义区间
+    return channel_data.get("last_id", 0), channel_data.get("ranges", [])
 
 
 # --- 后台 Worker 进程 ---
@@ -136,8 +174,9 @@ async def download_worker(bot):
                 # 6. 结果结算
                 total_duration = round(time.time() - start_time, 1)
                 if success:
-                    if os.path.exists(local_path): os.remove(local_path)
-                    save_progress(msg.id)
+                    if os.path.exists(local_path):
+                        os.remove(local_path)
+                    update_channel_data(target_chat, msg.id, None)
                     final_text = (
                         f"✨ **同步成功！**\n\n"
                         f"📁 目录: `{remote_target}`\n"
@@ -239,8 +278,8 @@ async def run_scan_and_update_status(target_chat, msg_status, chat_id):
     """这个函数负责苦力活：扫描 + 更新进度"""
     count = 0
     scanned_total = 0
-    last_id = load_progress()  # 建议改为异步加载
-
+    global config
+    last_id, ranges = get_channel_progress(target_chat)
     try:
         if not init.tg_user_client.is_connected():
             await init.tg_user_client.connect()

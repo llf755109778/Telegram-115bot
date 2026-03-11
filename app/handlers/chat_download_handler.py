@@ -11,6 +11,8 @@ from telegram.ext import ContextTypes, CommandHandler
 import init
 
 from app.core.open_115 import calculate_sha1
+from app.utils.fast_telethon import download_file_parallel
+from app.utils.utils import sanitize_filename, get_ext
 
 # --- 存储和配置 ---
 CONFIG_FILE = "/config/sync_config.json"
@@ -32,34 +34,6 @@ def load_progress():
 def save_progress(last_id):
     with open(CONFIG_FILE, 'w') as f:
         json.dump({"last_id": last_id}, f)
-
-
-def sanitize_filename(name):
-    if not name: return ""
-    # 过滤网盘和系统敏感字符
-    name = re.sub(r'[\\/:*?"<>|#%&{}]', '', name)
-    return name.replace('\n', ' ').strip()[:80]
-
-
-def get_ext(msg):
-    ext = None
-    if msg.file and msg.file.ext:
-        ext = msg.file.ext  # 这会自动带上点，如 .mp4
-    else:
-        # 2. 如果没有后缀，根据 MIME 类型猜测
-        mime = msg.file.mime_type if msg.file else None
-        if mime:
-            import mimetypes
-            ext = mimetypes.guess_extension(mime)
-
-    # 3. 最后的兜底
-    if not ext:
-        ext = ".mp4" if msg.video else ".jpg"
-
-    # 确保 ext 是带点的格式（有时候 guess_extension 返回的不稳定）
-    if ext and not ext.startswith('.'):
-        ext = "." + ext
-    return ext
 
 
 # --- 后台 Worker 进程 ---
@@ -138,8 +112,16 @@ async def download_worker(bot):
 
             # 4. 下载
             init.logger.info(f"⬇️ 下载中: {file_name}")
-            await init.tg_user_client.download_media(msg, file=local_path, progress_callback=progress_callback)
+            # await init.tg_user_client.download_media(msg, file=local_path, progress_callback=progress_callback)
 
+            # 执行下载
+            await download_file_parallel(
+                init.tg_user_client,
+                msg,
+                file_path=local_path,
+                progress_callback=progress_callback,
+                threads=4
+            )
             # 5. 上传至 115
             await status_msg.edit_text(f"{status_header}\n\n✅ 下载完成！正在同步到 115 网盘...", parse_mode="Markdown")
 
@@ -175,7 +157,7 @@ async def download_worker(bot):
                     retry_seconds = 31 * 60
 
                     # 动态倒计时显示
-                    for i in range(retry_seconds, 0, -30):  # 每分钟更新一次状态，节省 API 请求
+                    for i in range(retry_seconds, 0, -60):  # 每分钟更新一次状态，节省 API 请求
                         minutes_left = i // 60
                         retry_msg = (
                             f"❌ **上传失败**\n"

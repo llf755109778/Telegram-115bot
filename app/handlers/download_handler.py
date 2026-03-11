@@ -25,6 +25,8 @@ from telegram.warnings import PTBUserWarning
 from app.utils.sqlitelib import *
 from concurrent.futures import ThreadPoolExecutor
 
+from app.utils.utils import sanitize_filename
+
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
 SELECT_MAIN_CATEGORY, SELECT_SUB_CATEGORY = range(10, 12)
@@ -405,27 +407,6 @@ async def get_list(link: str):
     return None
 
 
-def get_ext(msg):
-    """识别媒体真实后缀"""
-    # 如果 Telegram 已经识别出了后缀，直接用
-    if msg.file and msg.file.ext:
-        return msg.file.ext if msg.file.ext.startswith('.') else f".{msg.file.ext}"
-
-    # 针对 Photo 对象的兜底识别
-    if msg.photo: return ".jpg"
-    if msg.video: return ".mp4"
-    if msg.audio: return ".mp3"
-    return ".bin"
-
-
-def sanitize_filename(name):
-    """净化文件名，防止 115 上传失败"""
-    import re
-    if not name: return ""
-    # 过滤掉 \ / : * ? " < > | 等网盘不支持的字符
-    name = re.sub(r'[\\/:*?"<>|#%&{}]', '', name)
-    return name.replace('\n', ' ').strip()[:80]
-
 async def download_task(link:str, selected_path, user_id, dl_url_type=None, task_info=None):
     async with download_semaphore:
         """异步下载任务"""
@@ -468,7 +449,7 @@ async def download_task(link:str, selected_path, user_id, dl_url_type=None, task
                             clean_cap = sanitize_filename(m.text or "Media")[:15]
                             file_name = f"[{chat_tag}]_{clean_cap}_{m.id}{ext}"
                         else:
-                            file_name = sanitize_filename(raw_name)
+                            file_name = f"[{chat_tag}]_{sanitize_filename(raw_name)}_{m.id}{ext}"
                         current_item_task["file_name"] = file_name
                         current_item_task["task_id"] = f"{task_info.get('task_id', 'None')}_{m.id}"
                         file_size = 0

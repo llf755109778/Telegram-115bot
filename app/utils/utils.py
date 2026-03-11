@@ -6,6 +6,7 @@ import yaml
 import os
 from urllib.parse import urlparse, parse_qs
 
+
 def read_yaml_file(yaml_path):
     # 获取yaml文件名称
     try:
@@ -17,10 +18,63 @@ def read_yaml_file(yaml_path):
             yaml_conf = yaml.load(cfg, Loader=yaml.FullLoader)
             return yaml_conf
         else:
-           return False
+            return False
     except Exception as e:
         init.logger.warn(f"配置文件[{yaml_path}]格式有误，请检查!")
         return False
+
+
+import mimetypes
+
+
+def get_ext(msg):
+    """
+    最强媒体后缀识别：优先原生标识 > 其次MIME探测 > 最后类型兜底
+    """
+    ext = None
+
+    # 1. 优先获取 Telegram 官方识别的后缀
+    if msg.file and msg.file.ext:
+        ext = msg.file.ext
+        # 有些极少数情况 ext 可能是 "mp4" 而不是 ".mp4"
+        if not ext.startswith('.'):
+            ext = "." + ext
+
+    # 2. 如果官方没给后缀，通过 MIME 类型猜测 (最科学的方法)
+    if not ext or ext == ".bin":
+        mime = msg.file.mime_type if msg.file else None
+        if mime:
+            # 内部字典修正：Telegram 有些 MIME 不标准，这里可以做映射
+            ext = mimetypes.guess_extension(mime)
+
+    # 3. 针对常见媒体类型的逻辑兜底 (防止 mimetypes 库没装全)
+    if not ext:
+        if msg.video:
+            ext = ".mp4"
+        elif msg.photo:
+            ext = ".jpg"
+        elif msg.audio:
+            ext = ".mp3"
+        elif msg.voice:
+            ext = ".ogg"
+        elif msg.gif:
+            ext = ".mp4"
+        else:
+            ext = ".bin"
+
+    # 4. 特殊修正：Telegram 经常把 .mkv 识别成 .bin
+    # 如果是视频但被识别成了 .bin，强制修正为 .mp4 以便预览
+    if msg.video and ext == ".bin":
+        ext = ".mp4"
+
+    return ext
+
+
+def sanitize_filename(name):
+    if not name: return ""
+    # 过滤网盘和系统敏感字符
+    name = re.sub(r'[\\/:*?"<>|#%&{}]', '', name)
+    return name.replace('\n', ' ').strip()[:80]
 
 
 def random_waite(min=2, max=15):
@@ -30,8 +84,8 @@ def random_waite(min=2, max=15):
     init.logger.info(f"随机等待 {wait_time} 秒以模拟人类行为...")
     ms = float(random.randint(1, 999)) / 1000.0
     time.sleep(wait_time + ms)
-    
-    
+
+
 def date_convert2BJT(date_str):
     if not date_str:
         return date.today().strftime("%Y-%m-%d")
@@ -80,7 +134,7 @@ def check_input(input_str):
     """
     if not input_str:
         return 0
-        
+
     # 纯英文
     if re.fullmatch(r'[a-zA-Z]+', input_str):
         return 1
@@ -99,7 +153,7 @@ def check_input(input_str):
     # 英文 + 数字
     elif re.fullmatch(r'[a-zA-Z0-9]+', input_str):
         return 6
-    
+
     return 0
 
 
@@ -113,7 +167,7 @@ def clean_magnet(magnet_link):
         parsed = urlparse(magnet_link)
         if parsed.scheme != 'magnet':
             return magnet_link
-        
+
         params = parse_qs(parsed.query)
         xt = params.get('xt', [])
         if xt:

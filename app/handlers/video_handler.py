@@ -10,6 +10,7 @@ from datetime import datetime
 from warnings import filterwarnings
 from telegram.warnings import PTBUserWarning
 from app.core.video_downloader import video_manager
+from app.utils.utils import get_ext, sanitize_filename
 
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 # 过滤 Telethon 的异步会话实验性功能警告
@@ -295,11 +296,23 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
             if not target_msg:
                 await query.edit_message_text(f"❌ 无法获取原始视频消息 (Entity: {entity}, ID: {video_info['message_id']})")
                 return
-                
+
+            ext = get_ext(target_msg)
+
+            # --- 2. 构造文件名 (手动控名，拒绝 Untitled) ---
+            # 优先用 m.file.name，没有则用 [频道]_标题_ID.后缀
+            raw_name = getattr(target_msg.file, 'name', None)
+            if not raw_name:
+                # 尝试拿消息文字前15个字，没字就叫 Media
+                clean_cap = sanitize_filename(target_msg.text or "Media")[:15]
+                file_name = f"{clean_cap}_{target_msg.id}{ext}"
+            else:
+                file_name = f"{sanitize_filename(raw_name)}_{target_msg.id}{ext}"
+
             # 提交任务到管理器
             task_info = {
                 "task_id": task_id,
-                "file_name": video_info['file_name'],
+                "file_name": file_name,
                 "file_size": video_info['file_size'],
                 "save_path": save_path,
                 "message": target_msg,

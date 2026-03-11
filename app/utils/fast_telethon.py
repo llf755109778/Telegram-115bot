@@ -97,8 +97,7 @@ async def download_file_parallel(client: TelegramClient, message, file_path, pro
 
                         with open(file_path, 'r+b') as f:
                             f.seek(offset)
-                            f.write(chunk_data)
-
+                            f.write(chunk_data[:file_size - offset])
                         async with progress_lock:
                             downloaded += len(chunk_data)
                             if progress_callback:

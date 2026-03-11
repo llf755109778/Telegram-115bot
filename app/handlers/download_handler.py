@@ -25,7 +25,7 @@ from telegram.warnings import PTBUserWarning
 from app.utils.sqlitelib import *
 from concurrent.futures import ThreadPoolExecutor
 
-from app.utils.utils import sanitize_filename
+from app.utils.utils import sanitize_filename, get_ext
 
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 

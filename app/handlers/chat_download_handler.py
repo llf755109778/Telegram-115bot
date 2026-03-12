@@ -159,7 +159,7 @@ async def download_worker(bot):
                 msg,
                 file_path=local_path,
                 progress_callback=progress_callback,
-                threads=4
+                threads=2
             )
             # 5. 上传至 115
             await status_msg.edit_text(f"{status_header}\n\n✅ 下载完成！正在同步到 115 网盘...", parse_mode="Markdown")

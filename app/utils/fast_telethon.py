@@ -162,7 +162,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
         with open(file_path, 'wb') as f:
             f.truncate(file_size)
 
-        part_size = 1024 * 1024  # 1MB
+        part_size = 1024 * 1024 * 4  # 1MB
         downloaded = 0
         progress_lock = asyncio.Lock()
         sem = asyncio.Semaphore(threads)
@@ -202,7 +202,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
                             logger.warning(f"收到非预期 TL 对象: {type(result)}, 回退单线程")
                             failed = True
                             return
-
+                        await asyncio.sleep(0.02)  # 轻微限速防止 Flood
                         chunk_data = result.bytes
                         with open(file_path, 'r+b') as f:
                             f.seek(offset)

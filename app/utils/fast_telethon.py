@@ -162,7 +162,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
         with open(file_path, 'wb') as f:
             f.truncate(file_size)
 
-        part_size = 1024 * 1024 * 4  # 1MB
+        part_size = 1024 * 1024 * 1  # 1MB
         downloaded = 0
         progress_lock = asyncio.Lock()
         sem = asyncio.Semaphore(threads)

@@ -260,7 +260,7 @@ class VideoDownloadManager:
                 # 使用 v_cancel_ 前缀避免与其他处理器的 cancel_ 冲突
                 keyboard = [[InlineKeyboardButton("❌ 取消下载", callback_data=f"v_cancel_{task_id}")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-
+            await asyncio.sleep(0.5)
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,

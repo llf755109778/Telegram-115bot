@@ -76,7 +76,7 @@ async def get_dc_client(main_client: TelegramClient, document):
         if client:
             try:
                 # 快速检查，不使用 get_me()
-                if client.is_connected():
+                if client.is_connected() and await client.get_me() is not None:
                     return client
                 await client.connect()
                 return client
@@ -262,7 +262,14 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
             raise Exception("多线程下载中有分片失败")
 
         return file_path
-
+    except errors.AuthKeyUnregisteredError:
+        # 发现授权确实失效了
+        logger.error(f"⚠️ DC {client.session.dc_id} 授权已失效，正在清理缓存...")
+        async with _dc_lock:
+            if client.session.dc_id in _dc_clients:
+                await _dc_clients[client.session.dc_id].disconnect()
+                del _dc_clients[client.session.dc_id]
+        raise  # 抛出去让主程序决定是重试还是回退
     except Exception as e:
         logger.error(f"下载遇到错误: {e}，回退单线程下载...")
         return await main_client.download_media(message, file=file_path, progress_callback=progress_callback)

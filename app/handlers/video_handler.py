@@ -307,6 +307,8 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
                 clean_cap = sanitize_filename(target_msg.text or "Media")[:15]
                 file_name = f"{clean_cap}_{target_msg.id}{ext}"
             else:
+                # 去除raw_name后缀
+                raw_name, extTmp = os.path.splitext(raw_name)
                 file_name = f"{sanitize_filename(raw_name)}_{target_msg.id}{ext}"
 
             # 提交任务到管理器

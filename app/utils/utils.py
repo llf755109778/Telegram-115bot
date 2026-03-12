@@ -74,7 +74,7 @@ def sanitize_filename(name):
     if not name: return ""
     # 过滤网盘和系统敏感字符
     name = re.sub(r'[\\/:*?"<>|#%&{}]', '', name)
-    return name.replace('\n', ' ').strip()[:80]
+    return name.replace('\n', ' ').strip()[:60]
 
 
 def random_waite(min=2, max=15):

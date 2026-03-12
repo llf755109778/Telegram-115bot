@@ -138,7 +138,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
 
         # 判断是否跨 DC
         client = main_client
-        if hasattr(document, 'dc_id') and document.dc_id != main_client.session.dc_id:
+        if hasattr(document, 'dc_id') and document.dc_id != main_client.session.dc_id and document.dc_id in [1, 4, 5]:
             client = await get_dc_client(main_client, document)
             logger.info(f"分身创建成功")
         logger.info(f"document dc_id={document.dc_id} client dc_id={client.session.dc_id}")

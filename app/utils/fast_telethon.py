@@ -76,7 +76,7 @@ async def get_dc_client(main_client: TelegramClient, document):
         if client:
             try:
                 # 快速检查，不使用 get_me()
-                if client.is_connected() and await client.get_me() is not None:
+                if client.is_connected():
                     return client
                 await client.connect()
                 return client

@@ -269,7 +269,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
             if client.session.dc_id in _dc_clients:
                 await _dc_clients[client.session.dc_id].disconnect()
                 del _dc_clients[client.session.dc_id]
-        raise  # 抛出去让主程序决定是重试还是回退
+        return await main_client.download_media(message, file=file_path, progress_callback=progress_callback)
     except Exception as e:
         logger.error(f"下载遇到错误: {e}，回退单线程下载...")
         return await main_client.download_media(message, file=file_path, progress_callback=progress_callback)

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 import re
 import json
 import time
@@ -162,7 +163,7 @@ async def download_worker(bot):
             )
             # 5. 上传至 115
             await status_msg.edit_text(f"{status_header}\n\n✅ 下载完成！正在同步到 115 网盘...", parse_mode="Markdown")
-
+            await asyncio.sleep(1 + 3 * random.random())  # 随机延迟 1 秒
             date_folder = msg.date.strftime("%Y-%m")
             remote_target = f"/AV/Telegram_Sync/{chat_tag}/{date_folder}"
             # 假设这部分代码在一个 async def 处理函数中
@@ -184,6 +185,7 @@ async def download_worker(bot):
                         f"⏱️ 总耗时: `{total_duration}s`"
                     )
                     await status_msg.edit_text(final_text, parse_mode="Markdown")
+                    await asyncio.sleep(1 + 3 * random.random())  # 随机延迟 1 秒
                     init.logger.info(f"✅ 完成: {file_name}")
                     break
                 else:

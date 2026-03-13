@@ -185,15 +185,17 @@ async def download_worker(bot):
                         f"📝 文件: `{file_name}`\n"
                         f"⏱️ 总耗时: `{total_duration}s`"
                     )
-                    await status_msg.edit_text(final_text, parse_mode="Markdown")
+                    await init.tg_user_client.send_message(init.bot_config['bot_name'], final_text,
+                                                           parse_mode="Markdown")
                     await asyncio.sleep(1 + 3 * random.random())  # 随机延迟 1 秒
                     init.logger.info(f"✅ 完成: {file_name}")
                     break
                 else:
                     init.logger.error(f"❌ 上传失败: {result}，准备倒计时重试")
-                    await status_msg.edit_text(f"❌ **上传失败**\n 31分钟以后重试"
-                                               f"📁 目录: `{remote_target}`\n"
-                                               f"📝 文件: `{file_name}`\n")
+                    user_message = await init.tg_user_client.send_message(init.bot_config['bot_name'],
+                                                                          f"❌ **上传失败**\n 31分钟以后重试"
+                                                                          f"📁 目录: `{remote_target}`\n"
+                                                                          f"📝 文件: `{file_name}`\n")
 
                     # 倒计时 31 分钟 (31 * 60 = 1860 秒)
                     retry_seconds = 3 * 60
@@ -208,9 +210,9 @@ async def download_worker(bot):
                             f"⏳ 将在 **{minutes_left}** 分钟后自动重试..."
                         )
                         try:
-                            await status_msg.edit_text(retry_msg, parse_mode="Markdown")
-                        except Exception:
-                            pass  # 防止编辑消息太快被 Telegram 限制
+                            await user_message.edit_text(retry_msg, parse_mode="Markdown")
+                        except Exception as e:
+                            init.logger.error(f"❌ 倒计时消息编辑失败: {str(e)}")
 
                         await asyncio.sleep(60)  # 等待一分钟
                 # 倒计时结束，重置开始时间并重新进入 while 循环

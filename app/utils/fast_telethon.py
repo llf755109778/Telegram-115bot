@@ -128,7 +128,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
     """
     try:
         # 获取最新消息
-        message = await main_client.get_messages(message.peer_id, ids=message.id)
+        # message = await main_client.get_messages(message.peer_id, ids=message.id)
         media = getattr(message, 'media', None)
         document = getattr(media, 'document', None)
 
@@ -222,6 +222,8 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
                         logger.error(f"分片下载失败 offset={offset}: {e}")
                         failed = True
                         raise e
+                finally:
+                    await asyncio.sleep(0.02)
 
         # 创建所有分片任务
         tasks = [asyncio.create_task(download_chunk(offset)) for offset in range(0, file_size, part_size)]

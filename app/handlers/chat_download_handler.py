@@ -19,7 +19,8 @@ from app.utils.utils import sanitize_filename, get_ext
 CONFIG_FILE = "/config/sync_config.json"
 caption_cache = OrderedDict()
 MAX_CACHE_SIZE = 50000  # 1000 个消息组通常足够了
-download_queue = asyncio.Queue()
+SYNC_QUEUE_SIZE = 3
+download_queue = asyncio.Queue(maxsize=SYNC_QUEUE_SIZE)
 
 
 def load_config():
@@ -228,7 +229,7 @@ async def download_worker(bot):
                 # 优化 2: 动态休眠
                 # 如果 115 上传或 TG 下载太频繁，建议保留一小段间隔，
                 # 但 1秒 太久，建议 0.1 ~ 0.2 秒即可，或者仅在连续失败时增加休眠。
-            await asyncio.sleep(0.2)
+        await asyncio.sleep(0.5)
 
 
 # --- 异步上传封装 ---
@@ -285,6 +286,7 @@ async def run_scan_and_update_status(target_chat, msg_status, chat_id):
     try:
         if not init.tg_user_client.is_connected():
             await init.tg_user_client.connect()
+            init.logger.info("重新连接成功")
 
         # 核心改进：直接流式遍历，不存入 items 列表
         # reverse=True 表示从旧到新拉取，这样 grouped_id 的标题逻辑依然生效
@@ -317,7 +319,7 @@ async def run_scan_and_update_status(target_chat, msg_status, chat_id):
 
             # 每扫描 100 条消息（无论是不是媒体），让出一次控制权，防止卡死
             if scanned_total % 100 == 0:
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(1)
 
             # 每发现 50 个媒体，更新一次进度条，让用户爽到
             if count > 0 and count % 100 == 0:

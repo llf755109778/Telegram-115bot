@@ -45,6 +45,7 @@ openapi_115 = None
 
 # Tg 用户客户端
 tg_user_client: Optional[TelegramClient] = None
+tg_user_client_download: Optional[TelegramClient] = None
 
 # aria2 客户端
 aria2_client = None
@@ -62,6 +63,7 @@ CONFIG_FILE_EXAMPLE = "/config/config.yaml.example"
 STRATEGY_FILE = "/config/crawling_strategy.yaml"
 # SessionFile
 TG_SESSION_FILE = "/config/user_session.session"
+TG_DOWNLOAD_SESSION_FILE = "/config/user_session_download.session"
 # DB File
 DB_FILE = "/config/db.db"
 # 115 Token File
@@ -203,7 +205,7 @@ def initialize_tg_usr_client():
     初始化Tg用户客户端
     :return: bool - 初始化是否成功
     """
-    global tg_user_client, bot_config, logger
+    global tg_user_client, bot_config, logger, tg_user_client_download
     try:
         # 兼容老版本的配置项拼写错误
         mistake = bot_config.get('bote_name', "")
@@ -217,6 +219,7 @@ def initialize_tg_usr_client():
             logger.warn("缺少必要的Telegram API配置 (tg_api_id & tg_api_hash & bot_name), 无法使用视频上传功能。")
             logger.warn("配置方法请参考：https://github.com/qiqiandfei/Telegram-115bot/wiki/VideoDownload")
             tg_user_client = None
+            tg_user_client_download = None
             return False
             
         api_id = bot_config['tg_api_id']
@@ -227,10 +230,16 @@ def initialize_tg_usr_client():
             logger.warn("Session文件不可用，视频上传功能将被禁用。")
             logger.warn("配置方法请参考：https://github.com/qiqiandfei/Telegram-115bot/wiki/VideoDownload")
             tg_user_client = None
+            tg_user_client_download = None
             return False
         
         client_params = {
             'session': TG_SESSION_FILE,
+            'api_id': api_id,
+            'api_hash': api_hash
+        }
+        client_download_params = {
+            'session': TG_DOWNLOAD_SESSION_FILE,
             'api_id': api_id,
             'api_hash': api_hash
         }
@@ -258,6 +267,7 @@ def initialize_tg_usr_client():
                 logger.warn(f"解析代理设置失败: {e}")
 
         tg_user_client = TelegramClient(**client_params)
+        tg_user_client_download = TelegramClient(**client_download_params)
         logger.info(f"Telegram User Client 初始化成功，session路径: {TG_SESSION_FILE}")
         return True
         
@@ -265,6 +275,7 @@ def initialize_tg_usr_client():
         logger.warn(f"Telegram User Client 初始化失败: {e}")
         logger.warn("配置方法请参考：https://github.com/qiqiandfei/Telegram-115bot/wiki/VideoDownload")
         tg_user_client = None
+        tg_user_client_download = None
         return False
     
 def initialize_115open():

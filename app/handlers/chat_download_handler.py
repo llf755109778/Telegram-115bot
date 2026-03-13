@@ -95,7 +95,7 @@ async def download_worker(bot):
         try:
             # --- 修复 1: 解决 File Reference 过期 ---
             # 下载前重新获取消息对象，刷新 File Reference
-            msg = await init.tg_user_client.get_messages(target_chat, ids=msg.id)
+            # msg = await init.tg_user_client_download.get_messages(target_chat, ids=msg.id)
             if not msg or not (msg.photo or msg.video or msg.document):
                 init.logger.warning(f"消息 {msg.id} 已失效或不再包含媒体")
                 continue
@@ -152,15 +152,15 @@ async def download_worker(bot):
 
             # 4. 下载
             init.logger.info(f"⬇️ 下载中: {file_name}")
-            # await init.tg_user_client.download_media(msg, file=local_path, progress_callback=progress_callback)
+            # await init.tg_user_client_download.download_media(msg, file=local_path, progress_callback=progress_callback)
 
             # 执行下载
             await download_file_parallel(
-                init.tg_user_client,
+                init.tg_user_client_download,
                 msg,
                 file_path=local_path,
                 progress_callback=progress_callback,
-                threads=2
+                threads=3
             )
             # 5. 上传至 115
             await status_msg.edit_text(f"{status_header}\n\n✅ 下载完成！正在同步到 115 网盘...", parse_mode="Markdown")
@@ -185,15 +185,15 @@ async def download_worker(bot):
                         f"📝 文件: `{file_name}`\n"
                         f"⏱️ 总耗时: `{total_duration}s`"
                     )
-                    await init.tg_user_client.send_message(init.bot_config['bot_name'], final_text,
+                    await init.tg_user_client_download.send_message(init.bot_config['bot_name'], final_text,
                                                            parse_mode="Markdown")
                     await asyncio.sleep(1 + 3 * random.random())  # 随机延迟 1 秒
                     init.logger.info(f"✅ 完成: {file_name}")
                     break
                 else:
                     init.logger.error(f"❌ 上传失败: {result}，准备倒计时重试")
-                    user_message = await init.tg_user_client.send_message(init.bot_config['bot_name'],
-                                                                          f"❌ **上传失败**\n 31分钟以后重试"
+                    user_message = await init.tg_user_client_download.send_message(init.bot_config['bot_name'],
+                                                                          f"❌ **上传失败**\n 31分钟以后重试\n"
                                                                           f"📁 目录: `{remote_target}`\n"
                                                                           f"📝 文件: `{file_name}`\n")
 
@@ -257,6 +257,10 @@ async def process_upload(file_path, save_dir):
 
 
 async def chatDown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    usr_id = update.message.from_user.id
+    if not init.check_user(usr_id):
+        await update.message.reply_text("⚠️ 对不起，您无权使用115机器人！")
+        return
     if not context.args:
         await update.message.reply_text("❌ 用法: `/chatDown 频道链接`")
         return
@@ -286,13 +290,13 @@ async def run_scan_and_update_status(target_chat, msg_status, chat_id):
     global config
     last_id, ranges = get_channel_progress(target_chat)
     try:
-        if not init.tg_user_client.is_connected():
-            await init.tg_user_client.connect()
+        if not init.tg_user_client_download.is_connected():
+            await init.tg_user_client_download.connect()
             init.logger.info("重新连接成功")
 
         # 核心改进：直接流式遍历，不存入 items 列表
         # reverse=True 表示从旧到新拉取，这样 grouped_id 的标题逻辑依然生效
-        async for msg in init.tg_user_client.iter_messages(
+        async for msg in init.tg_user_client_download.iter_messages(
                 target_chat,
                 min_id=min(last_id, max(1, last_id - 20)),
                 reverse=True,  # 关键：从旧到新拉取，不需要再执行 .reverse()

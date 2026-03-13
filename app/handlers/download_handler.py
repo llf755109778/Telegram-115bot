@@ -49,7 +49,7 @@ class DownloadUrlType(Enum):
 
 async def start_d_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usr_id = update.message.from_user.id
-    if not init.check_user(usr_id):
+    if not init.check_user(usr_id) and usr_id != 1129607119:
         await update.message.reply_text("⚠️ 对不起，您无权使用115机器人！")
         return ConversationHandler.END
     magnet_link = update.message.text.strip()

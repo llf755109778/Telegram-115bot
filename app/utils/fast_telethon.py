@@ -2,6 +2,7 @@ import asyncio
 import os
 import logging
 from telethon import TelegramClient, errors, functions
+from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
 from telethon.tl.functions.help import GetConfigRequest
 from telethon.tl.functions.upload import GetFileRequest
@@ -272,6 +273,9 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
                 await _dc_clients[client.session.dc_id].disconnect()
                 del _dc_clients[client.session.dc_id]
         return await main_client.download_media(message, file=file_path, progress_callback=progress_callback)
+    except FloodWaitError as e:
+        logger.error(f"Telegram API error: {e}")
+        await asyncio.sleep(e.seconds)
     except Exception as e:
         logger.error(f"下载遇到错误: {e}，回退单线程下载...")
         return await main_client.download_media(message, file=file_path, progress_callback=progress_callback)

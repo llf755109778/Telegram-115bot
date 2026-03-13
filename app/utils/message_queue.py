@@ -73,6 +73,7 @@ async def queue_worker(loop, token):
                             init.logger.error(f"按钮数据过长: {len(button.callback_data)} bytes - {button.callback_data[:100]}...")
             
             # 根据是否有图片和键盘选择发送方式
+            post_url = None
             if post_url:
                 # 发送图片消息（增加超时时间）
                 await bot.send_photo(

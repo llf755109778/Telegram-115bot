@@ -129,7 +129,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
     """
     try:
         # 获取最新消息
-        # message = await main_client.get_messages(message.peer_id, ids=message.id)
+        message = await main_client.get_messages(message.peer_id, ids=message.id)
         media = getattr(message, 'media', None)
         document = getattr(media, 'document', None)
 
@@ -189,6 +189,8 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
 
                 try:
                     async with sem:
+                        if failed:
+                            return
                         current_part_size = part_size
                         # if offset + current_part_size > file_size:
                         #     current_part_size = file_size - offset
@@ -218,6 +220,7 @@ async def download_file_parallel(main_client: TelegramClient, message, file_path
                         return
                 except Exception as e:
                     retries -= 1
+                    logger.warning(f"分片 {offset} 请求失败，剩余重试次数: {retries}")
                     await asyncio.sleep(1)
                     if retries == 0:
                         logger.error(f"分片下载失败 offset={offset}: {e}")

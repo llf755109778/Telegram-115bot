@@ -1,6 +1,8 @@
 import asyncio
 import os
 import logging
+import time
+
 from telethon import TelegramClient, errors, functions
 from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
@@ -57,7 +59,7 @@ async def get_best_dc_nodes(client):
 
 # 全局变量
 GLOBAL_DC_MAP = {}
-
+_last_connect_time = {} # 记录每个 DC 上次重试的时间
 
 async def init_dc_map(main_client):
     global GLOBAL_DC_MAP
@@ -70,7 +72,7 @@ async def get_dc_client(main_client: TelegramClient, document):
     """
     为目标 DC 获取独立客户端
     """
-    global GLOBAL_DC_MAP
+    global GLOBAL_DC_MAP,_last_connect_time
     target_dc = document.dc_id
     async with _dc_lock:
         client = _dc_clients.get(target_dc)
@@ -79,6 +81,7 @@ async def get_dc_client(main_client: TelegramClient, document):
                 # 快速检查，不使用 get_me()
                 if client.is_connected():
                     return client
+                await asyncio.sleep(10)
                 await client.connect()
                 return client
             except:
@@ -88,6 +91,15 @@ async def get_dc_client(main_client: TelegramClient, document):
 
         if client:
             return client
+
+        now = time.time()
+
+        # 检查重试冷却时间，防止“自杀式”高频重连
+        last_time = _last_connect_time.get(target_dc, 0)
+        if now - last_time < 30:  # 30秒内不允许对同一个 DC 重新建联
+            wait = 30 - (now - last_time)
+            logger.warning(f"DC {target_dc} 冷却中，需等待 {wait:.1f}s")
+            await asyncio.sleep(wait)
 
         if not GLOBAL_DC_MAP:
             GLOBAL_DC_MAP = await get_best_dc_nodes(main_client)
@@ -110,6 +122,7 @@ async def get_dc_client(main_client: TelegramClient, document):
             # 3. 只有成功了才存入缓存
             _dc_clients[target_dc] = new_client
             logger.info(f"✨ DC {target_dc} 分身建立成功并已加入缓存")
+            _last_connect_time[target_dc] = time.time()  # 更新尝试时间
             return new_client
         except Exception as e:
             logger.error(f"❌ 建立 DC {target_dc} 分身失败: {e}")
